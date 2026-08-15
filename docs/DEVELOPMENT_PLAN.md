@@ -58,16 +58,21 @@ Goal: users can get data in and see it rendered, even before maps/practice hub e
 
 **Acceptance criteria:** Vitest/RTL coverage for the wizard's branching logic (penalty classification — including exact seed-data-scenario regression tests; short-putt vs. long-putt routing) — 115 frontend tests total. An end-to-end manual pass of uploading a sample `.FIT` file was run in a real browser (Playwright against Chromium) through to a rendered Round Snapshot for the *existing* seeded demo round, and separately through the full audit wizard flow (add shots → penalty → fringe isolation → putt routing → strike-quality tag → completion) for a fresh round — this manual pass caught two real bugs (missing CORS config; a decimal-distance input silently failing native HTML5 step validation), both fixed.
 
-## Phase 4 — Hole Replay, Dispersion Maps & Strategy Engine
+## Phase 4 — Hole Replay, Dispersion Maps & Strategy Engine (done, with noted gaps)
 
 Goal: spatial visualization layer on top of Phase 1–3 data.
 
-- [ ] Mapbox GL integration rendering hole satellite imagery with the plotted shot vector per hole.
-- [ ] 2D dispersion ellipse overlay (Deck.gl or SVG) computed from a club's Smart Bag carry/lateral stats, positioned relative to a chosen aim point.
-- [ ] Center-green aim comparison line and tucked-pin dispersion-vs-pin overlay.
-- [ ] Short-sided / "sucker pin" strategy alert banners triggered from Phase 2 classifications.
+- [x] `app/services/geometry.py`: flat-earth tee→green aim-line projection (longitudinal/lateral yards for any GPS point). This is what actually closes the lateral-dispersion gap Phase 2 flagged as unpopulated — `Hole.tee_location`/`green_center` and `Shot.location` already existed in the schema, they just weren't being used together. Wired into `GET /api/bag/{user_id}`, which now reports `lateral_mean_yards`/`lateral_stdev_yards` and a `dispersion_ellipse` per club with at least one located shot. `app/db/seed.py` was extended to actually populate `Shot.location` (it never had before — every seeded shot's location was `NULL`), including a deliberate rule that a shot recording no forward progress (a penalty marker or stroke-and-distance reset) gets no location rather than a fabricated one.
+- [x] `app/services/dispersion.py`: 2D dispersion ellipse math (`compute_dispersion_ellipse`, `is_within_ellipse`) — the latter is the primitive a real "sucker pin" containment check would use, built and tested but not yet wired to a live pin position (see gap below).
+- [x] `GET /api/rounds/{id}/holes` + `GET /api/rounds/{id}/holes/{number}/replay`: hole geometry (tee, green center, green boundary) plus this round's shots with GPS locations and their Phase 2 `approach_leave` classification.
+- [x] Hole replay UI (`src/components/hole-replay/`): an SVG schematic (`HoleReplaySvg`) that always works — tee/green markers, green boundary, shot path, and the dispersion ellipse anchored at the approach shot's actual start position (its mean/stdev are *carry* distance, relative to where the club was swung, not an absolute hole position — this was a real bug caught during the manual visual check below and fixed). The tee→green line doubles as the "center-green aim comparison line." A real Mapbox GL layer (`HoleReplayMap`) renders satellite imagery + markers + the shot-path line when a token is configured, loading `mapbox-gl` via a dynamic `import()` so the ~500KB library isn't bundled for the (default, in this environment) no-token path.
+- [x] Short-sided / "sucker pin" banner (`ShortSidedBanner`), driven by Phase 2's `approach_leave` classification, shown on the new `/rounds/[id]` hole-by-hole replay page.
 
-**Acceptance criteria:** dispersion ellipse math covered by unit tests (given known mean/stdev, ellipse bounds match expected values); manual visual check of hole replay against a real synced round.
+**Gaps carried forward:**
+- **No real Mapbox token in this environment** (no developer account configured here) — same boundary as Garmin OAuth in Phase 3. `HoleReplayMap` is real, complete code, verified to fall back correctly (and to recover from a map load error) with a mocked `mapbox-gl`, but the actual satellite-tile rendering is unverified against Mapbox's real servers.
+- **No per-round pin position** — `Hole.green_center` is a static point, not where the pin was cut that day. This is the same root cause Phase 2/3 already flagged for the short-sided proxy; it also means `is_within_ellipse`'s real use ("is today's tucked pin inside my dispersion pattern") isn't wired up yet, and the aim line targets the green center rather than the actual pin. Both need a schema addition (a per-round pin location) that's out of scope here.
+
+**Acceptance criteria:** dispersion ellipse math covered by unit tests (`tests/test_dispersion.py` — known mean/stdev → exact expected bounds, boundary-inclusive containment checks). Manual visual check of hole replay against the real seeded demo round, in a real browser (Playwright/Chromium) — this caught and fixed the ellipse-anchoring bug above, on top of confirming the SVG schematic, green boundary, shot path, and lateral offsets (e.g. hole 7's "Heel / Push-Slice" tag) all render correctly against real computed geometry.
 
 ## Phase 5 — Practice Hub, R10/R50 Delivery & Coach Export
 

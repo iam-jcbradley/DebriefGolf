@@ -14,6 +14,7 @@ Usage: uv run python -m app.db.seed
 """
 
 import math
+import random
 
 from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
@@ -57,6 +58,55 @@ def _green_boundary(lat: float, lng: float, radius_yards: float = 15) -> WKTElem
         plat, plng = _move(lat, lng, bearing, radius_yards)
         pts.append(f"{plng} {plat}")
     return WKTElement(f"POLYGON(({', '.join(pts)}))", srid=4326)
+
+
+# Fixed seed: demo data must stay reproducible across reseeds.
+_LATERAL_RNG = random.Random(42)
+
+
+def _lateral_offset_yards(shot: dict) -> float:
+    """A rough, deterministic lateral miss (yards right of the tee->green
+    aim line; negative = left) for plotting on the hole replay map and for
+    Smart Bag lateral dispersion (PRD §5.3) — there's no real swing physics
+    here, just enough variance for the demo data to look like real shots
+    and for the narrative tags (§ SPECIAL_HOLES) to visually match their
+    story."""
+    club = shot.get("club")
+    if club is None or club == "Putter":
+        return 0.0  # no lateral "miss" concept for a penalty marker or a putt
+    tag = shot.get("tag") or ""
+    if "OB" in tag:
+        return _LATERAL_RNG.uniform(18, 28)
+    if "Push" in tag or "Slice" in tag:
+        return _LATERAL_RNG.uniform(10, 16)
+    if "Short-Sided" in tag:
+        return _LATERAL_RNG.uniform(6, 10)
+    return _LATERAL_RNG.uniform(-6, 6)
+
+
+def _shot_location(
+    tee_lat: float, tee_lng: float, bearing: float, yardage: float,
+    start_distance: float, end_distance: float, lateral_yards: float,
+) -> WKTElement | None:
+    """The shot's landing point, projected along the hole's tee->green aim
+    line at (yardage - end_distance) from the tee, offset sideways by
+    `lateral_yards`.
+
+    Returns `None` when the shot recorded no forward progress
+    (`end_distance >= start_distance`) — a penalty-stroke marker or a
+    stroke-and-distance reset (PRD §4.2). Those don't have a real physical
+    position in this data model (the SG formula only cares that the
+    distance-to-hole didn't improve, not where the lost/OB ball actually
+    went), so this deliberately leaves `location` unset rather than
+    fabricating a plausible-looking coordinate nothing backs.
+    """
+    if end_distance >= start_distance:
+        return None
+    distance_from_tee = max(yardage - end_distance, 0.0)
+    lat, lng = _move(tee_lat, tee_lng, bearing, distance_from_tee)
+    if lateral_yards:
+        lat, lng = _move(lat, lng, bearing + 90, lateral_yards)
+    return _point(lat, lng)
 
 
 def approach_club_for(yards: float) -> str:
@@ -215,6 +265,10 @@ def seed() -> None:
         lat, lng = BASE_LAT, BASE_LNG
         bearing = 0.0
         holes: list[Hole] = []
+        # tee lat/lng + tee->green bearing per hole, kept for shot-location
+        # projection below (Hole.tee_location is WKT once persisted, not
+        # convenient to re-parse).
+        hole_geo: dict[int, tuple[float, float, float]] = {}
         for number, (par, yardage) in enumerate(HOLE_LAYOUT, start=1):
             tee_lat, tee_lng = lat, lng
             green_lat, green_lng = _move(tee_lat, tee_lng, bearing, yardage)
@@ -229,6 +283,7 @@ def seed() -> None:
             )
             session.add(hole)
             holes.append(hole)
+            hole_geo[number] = (tee_lat, tee_lng, bearing)
             bearing = (bearing + 35) % 360
             lat, lng = _move(green_lat, green_lng, bearing, 40)
         session.commit()
@@ -248,9 +303,14 @@ def seed() -> None:
 
         shot_count = 0
         for hole in holes:
+            tee_lat, tee_lng, bearing = hole_geo[hole.number]
             for shot_number, s in enumerate(
                 build_hole_shots(hole.number, hole.par, hole.yardage), start=1
             ):
+                location = _shot_location(
+                    tee_lat, tee_lng, bearing, hole.yardage,
+                    s["start"], s["end"], _lateral_offset_yards(s),
+                )
                 session.add(
                     Shot(
                         round_id=round_.id,
@@ -261,6 +321,7 @@ def seed() -> None:
                         end_lie=s["end_lie"],
                         start_distance_yards=s["start"],
                         end_distance_yards=s["end"],
+                        location=location,
                         tag=s.get("tag"),
                     )
                 )

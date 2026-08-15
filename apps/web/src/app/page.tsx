@@ -82,10 +82,20 @@ export default function DashboardPage() {
         )}
 
         {state.status === "ready" && !isPendingAnalytics(state.analytics) && (
-          <div className="grid gap-4 md:grid-cols-2">
-            <RoundSnapshot round={state.round} analytics={state.analytics} />
-            <TigerFiveMeter tigerFive={state.analytics.tiger_five} />
-          </div>
+          <>
+            <div className="grid gap-4 md:grid-cols-2">
+              <RoundSnapshot round={state.round} analytics={state.analytics} />
+              <TigerFiveMeter tigerFive={state.analytics.tiger_five} />
+            </div>
+            <p className="mt-4 text-sm">
+              <Link
+                href={`/rounds/${state.round.id}`}
+                className="underline hover:text-foreground"
+              >
+                View hole-by-hole replay
+              </Link>
+            </p>
+          </>
         )}
       </main>
     </div>

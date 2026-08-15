@@ -1,8 +1,10 @@
+import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.db.session import get_session
@@ -154,4 +156,131 @@ def get_round_analytics(
             }
             for r, shot in zip(sg_summary.shots, shots, strict=True)
         ],
+    }
+
+
+@router.get("/rounds/{round_id}/holes")
+def list_round_holes(
+    round_id: int, session: Annotated[Session, Depends(get_session)]
+) -> list[dict]:
+    """Hole summaries for a round's course (PRD §10 Phase 4), for a hole
+    picker in the hole-replay UI. Empty for a round with no course assigned
+    yet (see POST /rounds/upload)."""
+    round_ = session.get(Round, round_id)
+    if round_ is None:
+        raise HTTPException(status_code=404, detail="Round not found")
+    if round_.course_id is None:
+        return []
+
+    holes = session.exec(
+        select(Hole).where(Hole.course_id == round_.course_id).order_by(Hole.number)
+    ).all()
+
+    shot_counts: dict[int, int] = defaultdict(int)
+    for shot in session.exec(select(Shot).where(Shot.round_id == round_id)).all():
+        shot_counts[shot.hole_id] += 1
+
+    return [
+        {
+            "hole_number": hole.number,
+            "par": hole.par,
+            "yardage": hole.yardage,
+            "shot_count": shot_counts.get(hole.id, 0),
+        }
+        for hole in holes
+    ]
+
+
+@router.get("/rounds/{round_id}/holes/{hole_number}/replay")
+def get_hole_replay(
+    round_id: int, hole_number: int, session: Annotated[Session, Depends(get_session)]
+) -> dict:
+    """Hole geometry + this round's shots on that hole, for the hole replay
+    map (PRD §5.3, §10 Phase 4). Includes each shot's `approach_leave`
+    classification (PRD §5.2) so the frontend can raise a short-sided /
+    "sucker pin" strategy banner without recomputing it.
+    """
+    round_ = session.get(Round, round_id)
+    if round_ is None:
+        raise HTTPException(status_code=404, detail="Round not found")
+    if round_.course_id is None:
+        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
+
+    hole = session.exec(
+        select(Hole).where(Hole.course_id == round_.course_id, Hole.number == hole_number)
+    ).first()
+    if hole is None:
+        raise HTTPException(status_code=404, detail="Hole not found")
+
+    geo = session.exec(
+        select(
+            func.ST_Y(Hole.tee_location).label("tee_lat"),
+            func.ST_X(Hole.tee_location).label("tee_lng"),
+            func.ST_Y(Hole.green_center).label("green_lat"),
+            func.ST_X(Hole.green_center).label("green_lng"),
+            func.ST_AsGeoJSON(Hole.green_boundary).label("green_boundary_geojson"),
+        ).where(Hole.id == hole.id)
+    ).first()
+
+    green_boundary = None
+    if geo and geo.green_boundary_geojson:
+        ring = json.loads(geo.green_boundary_geojson)["coordinates"][0]
+        green_boundary = [{"lat": lat, "lng": lng} for lng, lat in ring]
+
+    shots = list(
+        session.exec(
+            select(Shot)
+            .where(Shot.round_id == round_id, Shot.hole_id == hole.id)
+            .order_by(Shot.shot_number)
+        ).all()
+    )
+
+    shot_locations: dict[int, dict] = {}
+    if shots:
+        location_rows = session.exec(
+            select(
+                Shot.id,
+                func.ST_Y(Shot.location).label("lat"),
+                func.ST_X(Shot.location).label("lng"),
+            ).where(
+                Shot.hole_id == hole.id, Shot.round_id == round_id, Shot.location.is_not(None)
+            )
+        ).all()
+        shot_locations = {row.id: {"lat": row.lat, "lng": row.lng} for row in location_rows}
+
+    shot_payloads = [
+        {
+            "shot_id": shot.id,
+            "shot_number": shot.shot_number,
+            "club": shot.club,
+            "start_lie": shot.start_lie.value,
+            "end_lie": shot.end_lie.value,
+            "start_distance_yards": shot.start_distance_yards,
+            "end_distance_yards": shot.end_distance_yards,
+            "strokes_gained": shot.strokes_gained,
+            "tag": shot.tag,
+            "approach_leave": classify_approach_leave(shot).value,
+            "location": shot_locations.get(shot.id),
+        }
+        for shot in shots
+    ]
+
+    return {
+        "round_id": round_id,
+        "hole_number": hole.number,
+        "par": hole.par,
+        "yardage": hole.yardage,
+        "tee": (
+            {"lat": geo.tee_lat, "lng": geo.tee_lng} if geo and geo.tee_lat is not None else None
+        ),
+        "green_center": (
+            {"lat": geo.green_lat, "lng": geo.green_lng}
+            if geo and geo.green_lat is not None
+            else None
+        ),
+        "green_boundary": green_boundary,
+        "shots": shot_payloads,
+        "short_sided_count": sum(
+            1 for s in shot_payloads if s["approach_leave"] == "short_sided"
+        ),
     }

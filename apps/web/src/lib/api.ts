@@ -61,6 +61,14 @@ export function isPendingAnalytics(
   return "needs_shots" in analytics;
 }
 
+export interface DispersionEllipse {
+  center_longitudinal_yards: number;
+  center_lateral_yards: number;
+  semi_major_yards: number;
+  semi_minor_yards: number;
+  k: number;
+}
+
 export interface ClubGappingStats {
   club: string;
   sample_count: number;
@@ -68,6 +76,9 @@ export interface ClubGappingStats {
   carry_mean_yards: number;
   carry_median_yards: number;
   carry_stdev_yards: number;
+  lateral_mean_yards: number | null;
+  lateral_stdev_yards: number | null;
+  dispersion_ellipse: DispersionEllipse | null;
 }
 
 export interface ClubGap {
@@ -87,6 +98,44 @@ export interface FitUploadResult {
   status: RoundStatus;
   sport: string | null;
   point_count: number;
+}
+
+export interface HoleSummary {
+  hole_number: number;
+  par: number;
+  yardage: number;
+  shot_count: number;
+}
+
+export interface LatLngPoint {
+  lat: number;
+  lng: number;
+}
+
+export interface HoleReplayShot {
+  shot_id: number;
+  shot_number: number;
+  club: string | null;
+  start_lie: string;
+  end_lie: string;
+  start_distance_yards: number;
+  end_distance_yards: number;
+  strokes_gained: number | null;
+  tag: string | null;
+  approach_leave: ApproachLeave;
+  location: LatLngPoint | null;
+}
+
+export interface HoleReplay {
+  round_id: number;
+  hole_number: number;
+  par: number;
+  yardage: number;
+  tee: LatLngPoint | null;
+  green_center: LatLngPoint | null;
+  green_boundary: LatLngPoint[] | null;
+  shots: HoleReplayShot[];
+  short_sided_count: number;
 }
 
 export class ApiError extends Error {
@@ -138,6 +187,14 @@ export function getRoundAnalytics(roundId: number): Promise<RoundAnalyticsRespon
 
 export function getSmartBag(userId: number): Promise<SmartBag> {
   return apiFetch<SmartBag>(`/api/bag/${userId}`);
+}
+
+export function getRoundHoles(roundId: number): Promise<HoleSummary[]> {
+  return apiFetch<HoleSummary[]>(`/api/rounds/${roundId}/holes`);
+}
+
+export function getHoleReplay(roundId: number, holeNumber: number): Promise<HoleReplay> {
+  return apiFetch<HoleReplay>(`/api/rounds/${roundId}/holes/${holeNumber}/replay`);
 }
 
 export function uploadFitFile(userId: number, file: File): Promise<FitUploadResult> {
