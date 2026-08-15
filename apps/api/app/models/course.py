@@ -8,6 +8,10 @@ class Course(SQLModel, table=True):
     name: str
     city: str | None = None
     state: str | None = None
+    # Set when this course was created from an OSM search result
+    # (app/services/osm_courses.py) — lets re-searching the same course
+    # resolve to the existing row instead of creating a duplicate.
+    osm_relation_id: int | None = Field(default=None, index=True)
 
     holes: list["Hole"] = Relationship(back_populates="course")
 

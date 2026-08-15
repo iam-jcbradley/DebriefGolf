@@ -35,3 +35,19 @@ export function yardsToSvgLength(yards: number, holeYardage: number, viewBox: Vi
   const totalYards = holeYardage + viewBox.paddingYards * 2;
   return yards * (viewBox.height / totalYards);
 }
+
+/** Inverse of `yardsToSvgPoint`: recovers the aim-line offset for a point
+ * clicked on the SVG schematic (course builder, manual shot entry without a
+ * Mapbox token). Combine with `offsetToLatLng` to get a real GPS point. */
+export function svgPointToOffset(
+  point: SvgPoint,
+  holeYardage: number,
+  viewBox: ViewBox
+): AimLineOffset {
+  const totalYards = holeYardage + viewBox.paddingYards * 2;
+  const scale = viewBox.height / totalYards;
+  return {
+    lateralYards: (point.x - viewBox.width / 2) / scale,
+    longitudinalYards: (viewBox.height - point.y) / scale - viewBox.paddingYards,
+  };
+}

@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { HoleReplay } from "@/lib/api";
 import { HoleReplaySvg } from "./hole-replay-svg";
 
@@ -103,5 +103,33 @@ describe("HoleReplaySvg", () => {
     const anchoredCy = anchored.querySelector("ellipse")?.getAttribute("cy");
     expect(anchoredCy).not.toBeNull();
     expect(anchoredCy).not.toEqual(unanchoredCy);
+  });
+
+  describe("onPick", () => {
+    beforeEach(() => {
+      Element.prototype.getBoundingClientRect = vi.fn(() => ({
+        left: 0, top: 0, width: 320, height: 480, right: 320, bottom: 480, x: 0, y: 0,
+        toJSON: () => {},
+      }));
+    });
+
+    it("does not attach a click handler when onPick is omitted", () => {
+      render(<HoleReplaySvg hole={baseHole} />);
+      // clicking shouldn't throw even without a handler
+      fireEvent.click(screen.getByRole("img"), { clientX: 160, clientY: 240 });
+    });
+
+    it("reports a clicked point's lat/lng near the green for a click at the top", () => {
+      const onPick = vi.fn();
+      render(<HoleReplaySvg hole={baseHole} onPick={onPick} />);
+
+      fireEvent.click(screen.getByRole("img"), { clientX: 160, clientY: 40 });
+
+      expect(onPick).toHaveBeenCalledTimes(1);
+      const [{ lat }] = onPick.mock.calls[0];
+      // green is due north of the tee (higher latitude); a click near the
+      // top of the SVG should resolve closer to the green than the tee.
+      expect(lat).toBeGreaterThan(baseHole.tee!.lat);
+    });
   });
 });

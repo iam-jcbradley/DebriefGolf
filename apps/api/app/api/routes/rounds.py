@@ -4,11 +4,13 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from geoalchemy2.elements import WKTElement
+from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.db.session import get_session
-from app.models import Hole, Round, Shot, User
+from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 from app.services.approach import classify_approach_leave
 from app.services.parsers.fit_parser import parse_fit_activity
 from app.services.putting import evaluate_putting
@@ -21,6 +23,140 @@ router = APIRouter()
 @router.get("/rounds")
 def list_rounds(session: Annotated[Session, Depends(get_session)]) -> list[Round]:
     return list(session.exec(select(Round)).all())
+
+
+class RoundCreateIn(BaseModel):
+    user_id: int
+    course_id: int
+    played_at: datetime | None = None
+    total_score: int | None = None
+    status: RoundStatus = RoundStatus.needs_audit
+
+
+@router.post("/rounds", status_code=201)
+def create_round(
+    payload: RoundCreateIn, session: Annotated[Session, Depends(get_session)]
+) -> Round:
+    """General round creation (PRD §10 Phase 5) — unlike `POST
+    /rounds/upload`, this isn't tied to a `.FIT` file: it's for a round
+    entered by hand (against a course that already exists, manually built
+    or sourced from OSM via `POST /courses`), which is now the primary way
+    round data gets in at all since Garmin's OAuth API (Phase 3) turned out
+    to require a paid developer account.
+    """
+    if session.get(User, payload.user_id) is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if session.get(Course, payload.course_id) is None:
+        raise HTTPException(status_code=404, detail="Course not found")
+
+    round_ = Round(
+        user_id=payload.user_id,
+        course_id=payload.course_id,
+        played_at=payload.played_at or datetime.now(UTC),
+        total_score=payload.total_score,
+        status=payload.status,
+    )
+    session.add(round_)
+    session.commit()
+    session.refresh(round_)
+    return round_
+
+
+class ShotLocationIn(BaseModel):
+    lat: float
+    lng: float
+
+
+class ShotCreateIn(BaseModel):
+    hole_number: int
+    shot_number: int
+    club: str | None = None
+    start_lie: Lie
+    end_lie: Lie
+    start_distance_yards: float
+    end_distance_yards: float
+    location: ShotLocationIn | None = None
+    tag: str | None = None
+
+
+class BulkShotsIn(BaseModel):
+    shots: list[ShotCreateIn]
+
+
+@router.post("/rounds/{round_id}/shots/bulk", status_code=201)
+def create_shots_bulk(
+    round_id: int, payload: BulkShotsIn, session: Annotated[Session, Depends(get_session)]
+) -> list[dict]:
+    """Adds shots to a round in one call (PRD §10 Phase 5) — the manual
+    entry flow accumulates a hole's shots client-side (same `DraftShot`
+    pattern the Phase 3 audit wizard already built, including its optional
+    GPS `location` picked on the hole map) and submits them here once the
+    user is done with a hole or the whole round. Purely additive: calling
+    this twice for the same round creates two sets of shots, it doesn't
+    replace anything — there's no manual-entry "edit a submitted round" flow
+    yet.
+    """
+    round_ = session.get(Round, round_id)
+    if round_ is None:
+        raise HTTPException(status_code=404, detail="Round not found")
+    if round_.course_id is None:
+        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
+
+    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
+    hole_id_by_number = {hole.number: hole.id for hole in holes}
+
+    unknown_numbers = sorted({s.hole_number for s in payload.shots} - hole_id_by_number.keys())
+    if unknown_numbers:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
+        )
+
+    created: list[tuple[Shot, ShotCreateIn]] = []
+    for s in payload.shots:
+        shot = Shot(
+            round_id=round_id,
+            hole_id=hole_id_by_number[s.hole_number],
+            shot_number=s.shot_number,
+            club=s.club,
+            start_lie=s.start_lie,
+            end_lie=s.end_lie,
+            start_distance_yards=s.start_distance_yards,
+            end_distance_yards=s.end_distance_yards,
+            location=(
+                WKTElement(f"POINT({s.location.lng} {s.location.lat})", srid=4326)
+                if s.location
+                else None
+            ),
+            tag=s.tag,
+        )
+        session.add(shot)
+        created.append((shot, s))
+    session.commit()
+
+    # Built from `shot.id` plus the already-known request payload, not by
+    # re-reading `shot.location` off the refreshed ORM object — geoalchemy2
+    # hands that back as a `WKBElement`, which isn't JSON-serializable (see
+    # the same fix on `GET /rounds/{round_id}/shots` above).
+    result = []
+    for shot, s in created:
+        session.refresh(shot)
+        result.append(
+            {
+                "id": shot.id,
+                "hole_id": shot.hole_id,
+                "shot_number": s.shot_number,
+                "club": s.club,
+                "start_lie": s.start_lie.value,
+                "end_lie": s.end_lie.value,
+                "start_distance_yards": s.start_distance_yards,
+                "end_distance_yards": s.end_distance_yards,
+                "strokes_gained": shot.strokes_gained,
+                "tag": s.tag,
+                "location": {"lat": s.location.lat, "lng": s.location.lng} if s.location else None,
+            }
+        )
+    return result
 
 
 @router.post("/rounds/upload")
@@ -60,13 +196,49 @@ async def upload_fit_activity(
 @router.get("/rounds/{round_id}/shots")
 def list_round_shots(
     round_id: int, session: Annotated[Session, Depends(get_session)]
-) -> list[Shot]:
+) -> list[dict]:
     round_ = session.get(Round, round_id)
     if round_ is None:
         raise HTTPException(status_code=404, detail="Round not found")
-    return list(
-        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
-    )
+
+    # Selecting raw columns (rather than `select(Shot)`) avoids handing back
+    # geoalchemy2's `WKBElement` for `location` — it isn't JSON-serializable,
+    # so a plain `list[Shot]` response crashes on any shot with a GPS point.
+    rows = session.exec(
+        select(
+            Shot.id,
+            Shot.hole_id,
+            Shot.shot_number,
+            Shot.club,
+            Shot.start_lie,
+            Shot.end_lie,
+            Shot.start_distance_yards,
+            Shot.end_distance_yards,
+            Shot.strokes_gained,
+            Shot.tag,
+            func.ST_Y(Shot.location).label("lat"),
+            func.ST_X(Shot.location).label("lng"),
+        )
+        .where(Shot.round_id == round_id)
+        .order_by(Shot.id)
+    ).all()
+
+    return [
+        {
+            "id": r.id,
+            "hole_id": r.hole_id,
+            "shot_number": r.shot_number,
+            "club": r.club,
+            "start_lie": r.start_lie.value,
+            "end_lie": r.end_lie.value,
+            "start_distance_yards": r.start_distance_yards,
+            "end_distance_yards": r.end_distance_yards,
+            "strokes_gained": r.strokes_gained,
+            "tag": r.tag,
+            "location": {"lat": r.lat, "lng": r.lng} if r.lat is not None else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/rounds/{round_id}/analytics")

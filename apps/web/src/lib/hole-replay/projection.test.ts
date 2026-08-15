@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { localYards, offsetFromAimLine, type LatLng } from "./projection";
+import { localYards, offsetFromAimLine, offsetToLatLng, type LatLng } from "./projection";
 
 const YARDS_PER_DEGREE_LAT = 121_000.0;
 const TEE: LatLng = { lat: 0, lng: 0 };
@@ -57,5 +57,36 @@ describe("offsetFromAimLine", () => {
 
   it("throws when tee and green coincide", () => {
     expect(() => offsetFromAimLine(TEE, TEE, TEE)).toThrow(/coincide/);
+  });
+});
+
+describe("offsetToLatLng", () => {
+  it("recovers the green's lat/lng from its own offset", () => {
+    const g = green(400);
+    const offset = offsetFromAimLine(TEE, g, g);
+    const point = offsetToLatLng(TEE, g, offset);
+    expect(point.lat).toBeCloseTo(g.lat);
+    expect(point.lng).toBeCloseTo(g.lng);
+  });
+
+  it("recovers the tee's lat/lng from a zero offset", () => {
+    const point = offsetToLatLng(TEE, green(400), { longitudinalYards: 0, lateralYards: 0 });
+    expect(point.lat).toBeCloseTo(TEE.lat);
+    expect(point.lng).toBeCloseTo(TEE.lng);
+  });
+
+  it("round-trips an arbitrary point through offsetFromAimLine and back", () => {
+    const original = { lat: 200 / YARDS_PER_DEGREE_LAT, lng: 15 / YARDS_PER_DEGREE_LAT };
+    const g = green(400);
+    const offset = offsetFromAimLine(TEE, g, original);
+    const recovered = offsetToLatLng(TEE, g, offset);
+    expect(recovered.lat).toBeCloseTo(original.lat, 9);
+    expect(recovered.lng).toBeCloseTo(original.lng, 9);
+  });
+
+  it("throws when tee and green coincide", () => {
+    expect(() =>
+      offsetToLatLng(TEE, TEE, { longitudinalYards: 0, lateralYards: 0 })
+    ).toThrow(/coincide/);
   });
 });

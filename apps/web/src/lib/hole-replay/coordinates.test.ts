@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { yardsToSvgLength, yardsToSvgPoint } from "./coordinates";
+import { svgPointToOffset, yardsToSvgLength, yardsToSvgPoint } from "./coordinates";
 
 const viewBox = { width: 200, height: 400, paddingYards: 20 };
 const holeYardage = 400;
@@ -59,5 +59,28 @@ describe("yardsToSvgLength", () => {
 
   it("returns zero for zero yards", () => {
     expect(yardsToSvgLength(0, holeYardage, viewBox)).toBe(0);
+  });
+});
+
+describe("svgPointToOffset", () => {
+  it("round-trips an arbitrary offset through yardsToSvgPoint and back", () => {
+    const original = { longitudinalYards: 150, lateralYards: 10 };
+    const point = yardsToSvgPoint(original, holeYardage, viewBox);
+    const recovered = svgPointToOffset(point, holeYardage, viewBox);
+    expect(recovered.longitudinalYards).toBeCloseTo(original.longitudinalYards);
+    expect(recovered.lateralYards).toBeCloseTo(original.lateralYards);
+  });
+
+  it("recovers zero offset at the tee's own SVG point", () => {
+    const tee = yardsToSvgPoint({ longitudinalYards: 0, lateralYards: 0 }, holeYardage, viewBox);
+    const recovered = svgPointToOffset(tee, holeYardage, viewBox);
+    expect(recovered.longitudinalYards).toBeCloseTo(0);
+    expect(recovered.lateralYards).toBeCloseTo(0);
+  });
+
+  it("recovers a rightward click as a positive lateral offset", () => {
+    const point = { x: viewBox.width / 2 + 20, y: viewBox.height / 2 };
+    const recovered = svgPointToOffset(point, holeYardage, viewBox);
+    expect(recovered.lateralYards).toBeGreaterThan(0);
   });
 });

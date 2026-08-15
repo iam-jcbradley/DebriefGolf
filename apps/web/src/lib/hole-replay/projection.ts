@@ -40,3 +40,31 @@ export function offsetFromAimLine(tee: LatLng, green: LatLng, point: LatLng): Ai
 
   return { longitudinalYards, lateralYards };
 }
+
+export function localYardsToLatLng(origin: LatLng, east: number, north: number): LatLng {
+  return {
+    lat: origin.lat + north / YARDS_PER_DEGREE_LAT,
+    lng: origin.lng + east / (YARDS_PER_DEGREE_LAT * Math.cos((origin.lat * Math.PI) / 180)),
+  };
+}
+
+/** Inverse of `offsetFromAimLine`: recovers the absolute lat/lng for a
+ * longitudinal/lateral offset from the tee->green aim line. Used when a
+ * user clicks a point on the hole map (course builder, manual shot entry)
+ * and that click needs to become a real GPS point to submit to the
+ * backend. */
+export function offsetToLatLng(tee: LatLng, green: LatLng, offset: AimLineOffset): LatLng {
+  const aim = localYards(tee, green);
+  const aimLength = Math.hypot(aim.east, aim.north);
+  if (aimLength === 0) {
+    throw new Error("tee and green coincide — no aim line to project onto");
+  }
+
+  const aimUnit = { x: aim.east / aimLength, y: aim.north / aimLength };
+  const perpUnit = { x: aimUnit.y, y: -aimUnit.x };
+
+  const east = offset.longitudinalYards * aimUnit.x + offset.lateralYards * perpUnit.x;
+  const north = offset.longitudinalYards * aimUnit.y + offset.lateralYards * perpUnit.y;
+
+  return localYardsToLatLng(tee, east, north);
+}

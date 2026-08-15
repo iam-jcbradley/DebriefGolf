@@ -1,3 +1,5 @@
+import type { Lie } from "@/lib/audit/types";
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export type RoundStatus = "verified" | "needs_audit" | "casual_practice";
@@ -138,6 +140,123 @@ export interface HoleReplay {
   short_sided_count: number;
 }
 
+// --- Course builder + manual round entry (PRD §10 Phase 5) ---
+//
+// Garmin's OAuth API (Phase 3) turned out to require a paid developer
+// account, so manual entry is now the primary way round data gets in:
+// pick or create a course (optionally prefilled from OpenStreetMap), create
+// a round against it, then submit shots hole-by-hole.
+
+export interface CourseListItem {
+  id: number;
+  name: string;
+  city: string | null;
+  state: string | null;
+}
+
+export interface HoleGeometry {
+  tee: LatLngPoint | null;
+  green_center: LatLngPoint | null;
+  green_boundary: LatLngPoint[] | null;
+}
+
+export interface CourseHoleDetail extends HoleGeometry {
+  hole_number: number;
+  par: number;
+  yardage: number;
+}
+
+export interface CourseDetail {
+  id: number;
+  name: string;
+  city: string | null;
+  state: string | null;
+  osm_relation_id: number | null;
+  holes: CourseHoleDetail[];
+}
+
+export interface HoleCreateInput {
+  number: number;
+  par: number;
+  yardage: number;
+  tee_location?: LatLngPoint | null;
+  green_center?: LatLngPoint | null;
+  green_boundary?: LatLngPoint[] | null;
+}
+
+export interface CourseCreateInput {
+  name: string;
+  city?: string | null;
+  state?: string | null;
+  osm_relation_id?: number | null;
+  holes: HoleCreateInput[];
+}
+
+export interface OsmCourseSummary {
+  osm_type: "way" | "relation" | "node";
+  osm_id: number;
+  name: string;
+  city: string | null;
+  state: string | null;
+  // Lets a map center itself on the course before any hole geometry has
+  // been fetched or built.
+  center: LatLngPoint | null;
+}
+
+// A draft, not yet persisted — OSM coverage is inconsistent, so every field
+// but the hole's identity may be missing and needs review before it's
+// submitted to `createCourse`.
+export interface OsmHoleCandidate {
+  number: number | null;
+  par: number | null;
+  yardage: number | null;
+  tee_location: LatLngPoint | null;
+  green_center: LatLngPoint | null;
+  green_boundary: LatLngPoint[] | null;
+}
+
+export interface OsmCourseDraft {
+  name: string;
+  city: string | null;
+  state: string | null;
+  osm_relation_id: number;
+  holes: OsmHoleCandidate[];
+}
+
+export interface RoundCreateInput {
+  user_id: number;
+  course_id: number;
+  played_at?: string;
+  total_score?: number | null;
+  status?: RoundStatus;
+}
+
+export interface ShotCreateInput {
+  hole_number: number;
+  shot_number: number;
+  club?: string | null;
+  start_lie: Lie;
+  end_lie: Lie;
+  start_distance_yards: number;
+  end_distance_yards: number;
+  location?: LatLngPoint | null;
+  tag?: string | null;
+}
+
+export interface CreatedShot {
+  id: number;
+  hole_id: number;
+  shot_number: number;
+  club: string | null;
+  start_lie: Lie;
+  end_lie: Lie;
+  start_distance_yards: number;
+  end_distance_yards: number;
+  strokes_gained: number | null;
+  tag: string | null;
+  location: LatLngPoint | null;
+}
+
 export class ApiError extends Error {
   status: number;
 
@@ -203,6 +322,54 @@ export function uploadFitFile(userId: number, file: File): Promise<FitUploadResu
   return apiFetch<FitUploadResult>(`/api/rounds/upload?user_id=${userId}`, {
     method: "POST",
     body: formData,
+  });
+}
+
+export function getCourses(): Promise<CourseListItem[]> {
+  return apiFetch<CourseListItem[]>("/api/courses");
+}
+
+export function getCourse(courseId: number): Promise<CourseDetail> {
+  return apiFetch<CourseDetail>(`/api/courses/${courseId}`);
+}
+
+export function createCourse(payload: CourseCreateInput): Promise<CourseDetail> {
+  return apiFetch<CourseDetail>("/api/courses", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function searchOsmCourses(query: string): Promise<OsmCourseSummary[]> {
+  return apiFetch<OsmCourseSummary[]>(
+    `/api/courses/search-osm?q=${encodeURIComponent(query)}`
+  );
+}
+
+export function getOsmCourseGeometry(
+  osmType: OsmCourseSummary["osm_type"],
+  osmId: number
+): Promise<OsmCourseDraft> {
+  return apiFetch<OsmCourseDraft>(`/api/courses/search-osm/${osmType}/${osmId}`);
+}
+
+export function createRound(payload: RoundCreateInput): Promise<RoundSummary> {
+  return apiFetch<RoundSummary>("/api/rounds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function submitRoundShots(
+  roundId: number,
+  shots: ShotCreateInput[]
+): Promise<CreatedShot[]> {
+  return apiFetch<CreatedShot[]>(`/api/rounds/${roundId}/shots/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shots }),
   });
 }
 

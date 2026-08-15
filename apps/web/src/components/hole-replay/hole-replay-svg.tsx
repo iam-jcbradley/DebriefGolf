@@ -1,7 +1,13 @@
+import type { MouseEvent } from "react";
 import { DispersionEllipseOverlay } from "@/components/hole-replay/dispersion-ellipse-overlay";
 import type { DispersionEllipse, HoleReplay, LatLngPoint } from "@/lib/api";
-import { type ViewBox, yardsToSvgLength, yardsToSvgPoint } from "@/lib/hole-replay/coordinates";
-import { offsetFromAimLine } from "@/lib/hole-replay/projection";
+import {
+  type ViewBox,
+  svgPointToOffset,
+  yardsToSvgLength,
+  yardsToSvgPoint,
+} from "@/lib/hole-replay/coordinates";
+import { offsetFromAimLine, offsetToLatLng } from "@/lib/hole-replay/projection";
 
 export interface HoleReplaySvgProps {
   hole: HoleReplay;
@@ -14,6 +20,10 @@ export interface HoleReplaySvgProps {
    * wrong for anything but a full tee shot. */
   ellipse?: DispersionEllipse | null;
   ellipseAnchorYards?: { longitudinal: number; lateral: number } | null;
+  /** When set, clicking the map reports the clicked GPS point here instead
+   * of the map being purely read-only (PRD §10 Phase 5 manual shot entry —
+   * see components/manual-entry/hole-shot-entry.tsx). */
+  onPick?: (latlng: LatLngPoint) => void;
   width?: number;
   height?: number;
 }
@@ -22,6 +32,7 @@ export function HoleReplaySvg({
   hole,
   ellipse,
   ellipseAnchorYards,
+  onPick,
   width = 320,
   height = 480,
 }: HoleReplaySvgProps) {
@@ -39,6 +50,16 @@ export function HoleReplaySvg({
 
   function project(point: LatLngPoint) {
     return yardsToSvgPoint(offsetFromAimLine(tee, green, point), hole.yardage, viewBox);
+  }
+
+  function handleClick(event: MouseEvent<SVGSVGElement>) {
+    if (!onPick) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const point = {
+      x: ((event.clientX - rect.left) / rect.width) * width,
+      y: ((event.clientY - rect.top) / rect.height) * height,
+    };
+    onPick(offsetToLatLng(tee, green, svgPointToOffset(point, hole.yardage, viewBox)));
   }
 
   const teePoint = project(tee);
@@ -69,6 +90,8 @@ export function HoleReplaySvg({
       height={height}
       role="img"
       aria-label={`Hole ${hole.hole_number} replay`}
+      onClick={onPick ? handleClick : undefined}
+      className={onPick ? "cursor-crosshair" : undefined}
     >
       <line
         x1={teePoint.x} y1={teePoint.y} x2={greenPoint.x} y2={greenPoint.y}

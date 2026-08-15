@@ -1,3 +1,5 @@
+import type { LatLng } from "@/lib/hole-replay/projection";
+
 // Mirrors app.models.shot.Lie (apps/api) — kept in sync by hand, there's no
 // shared schema between the two apps.
 export const LIES = [
@@ -15,12 +17,12 @@ export const LIES = [
 export type Lie = (typeof LIES)[number];
 
 // A shot as the audit wizard edits it — not the API's `Shot` shape. Uses a
-// hole *number* (1-18) rather than a `hole_id` FK: the wizard operates on a
-// freshly-uploaded round that may not have a course/holes assigned yet
-// (POST /api/rounds/upload creates a course-less Round — see
-// app/models/round.py). Submitting a draft to the backend needs a course
-// assigned first, which needs a course-matching or manual course-picker
-// flow this phase doesn't build (see docs/DEVELOPMENT_PLAN.md Phase 3).
+// hole *number* (1-18) rather than a `hole_id` FK, resolved server-side by
+// POST /rounds/{id}/shots/bulk (PRD §10 Phase 5) once the round has a
+// course. Shared by two flows: the Phase 3 audit wizard (reviewing a
+// freshly-uploaded, course-less round — no `location`) and Phase 5's manual
+// entry (a round already has a course, so `location` can be set by
+// clicking the hole map — see components/manual-entry/hole-shot-entry.tsx).
 export interface DraftShot {
   id: string;
   holeNumber: number;
@@ -30,6 +32,7 @@ export interface DraftShot {
   endLie: Lie;
   startDistanceYards: number;
   endDistanceYards: number;
+  location?: LatLng | null;
   tag?: string;
   strokesGained?: number;
 

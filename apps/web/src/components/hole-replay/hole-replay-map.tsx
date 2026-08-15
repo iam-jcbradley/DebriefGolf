@@ -3,7 +3,7 @@
 import "mapbox-gl/dist/mapbox-gl.css";
 import { useEffect, useRef, useState } from "react";
 import { HoleReplaySvg } from "@/components/hole-replay/hole-replay-svg";
-import type { DispersionEllipse, HoleReplay } from "@/lib/api";
+import type { DispersionEllipse, HoleReplay, LatLngPoint } from "@/lib/api";
 
 const ENV_MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
@@ -12,6 +12,9 @@ export interface HoleReplayMapProps {
   ellipse?: DispersionEllipse | null;
   /** Where to anchor `ellipse` — see `HoleReplaySvgProps.ellipseAnchorYards`. */
   ellipseAnchorYards?: { longitudinal: number; lateral: number } | null;
+  /** When set, clicking the map reports the clicked GPS point here instead
+   * of the map being purely read-only — see `HoleReplaySvgProps.onPick`. */
+  onPick?: (latlng: LatLngPoint) => void;
   /** Overrides the NEXT_PUBLIC_MAPBOX_TOKEN env var — mainly for tests. */
   mapboxToken?: string;
 }
@@ -33,11 +36,17 @@ export function HoleReplayMap({
   hole,
   ellipse,
   ellipseAnchorYards,
+  onPick,
   mapboxToken,
 }: HoleReplayMapProps) {
   const token = mapboxToken ?? ENV_MAPBOX_TOKEN;
   const containerRef = useRef<HTMLDivElement>(null);
   const [mapError, setMapError] = useState<string | null>(null);
+  // Read inside the click handler without adding `onPick` to the mount
+  // effect's deps — a new function identity on every parent render
+  // shouldn't tear down and rebuild the live map.
+  const onPickRef = useRef(onPick);
+  onPickRef.current = onPick;
 
   useEffect(() => {
     if (!token || !hole.tee || !containerRef.current) return;
@@ -57,6 +66,9 @@ export function HoleReplayMap({
       });
 
       map.on("error", (event) => setMapError(event.error?.message ?? "Failed to load the map"));
+      map.on("click", (event) => {
+        onPickRef.current?.({ lat: event.lngLat.lat, lng: event.lngLat.lng });
+      });
 
       map.on("load", () => {
         if (!map) return;
@@ -123,7 +135,12 @@ export function HoleReplayMap({
             Map failed to load: {mapError}
           </p>
         )}
-        <HoleReplaySvg hole={hole} ellipse={ellipse} ellipseAnchorYards={ellipseAnchorYards} />
+        <HoleReplaySvg
+          hole={hole}
+          ellipse={ellipse}
+          ellipseAnchorYards={ellipseAnchorYards}
+          onPick={onPick}
+        />
       </div>
     );
   }

@@ -80,4 +80,28 @@ describe("HoleReplayMap", () => {
     render(<HoleReplayMap hole={{ ...hole, tee: null }} mapboxToken="pk.test-token" />);
     expect(mapboxgl.Map).not.toHaveBeenCalled();
   });
+
+  it("registers a click handler that forwards the clicked lngLat to onPick", async () => {
+    const onPick = vi.fn();
+    render(<HoleReplayMap hole={hole} mapboxToken="pk.test-token" onPick={onPick} />);
+
+    await waitFor(() => expect(mapboxgl.Map).toHaveBeenCalledTimes(1));
+    const mapInstance = vi.mocked(mapboxgl.Map).mock.results[0].value;
+    const clickHandler = mapInstance.on.mock.calls.find(
+      ([event]: [string]) => event === "click"
+    )?.[1];
+    expect(clickHandler).toBeDefined();
+
+    act(() => {
+      clickHandler({ lngLat: { lat: 33.71, lng: -78.91 } });
+    });
+
+    expect(onPick).toHaveBeenCalledWith({ lat: 33.71, lng: -78.91 });
+  });
+
+  it("passes onPick through to the SVG fallback", () => {
+    const onPick = vi.fn();
+    render(<HoleReplayMap hole={hole} mapboxToken={undefined} onPick={onPick} />);
+    expect(screen.getByRole("img", { name: "Hole 7 replay" })).toHaveClass("cursor-crosshair");
+  });
 });

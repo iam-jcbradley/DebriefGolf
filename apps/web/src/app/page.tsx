@@ -38,11 +38,12 @@ export default function DashboardPage() {
             <FitUpload userId={userId !== null && !Number.isNaN(userId) ? userId : null} onUploaded={refresh} />
           </div>
           <p className="mt-3 text-sm text-muted-foreground">
-            Prefer automatic sync?{" "}
-            <Link href="/settings/garmin" className="underline hover:text-foreground">
-              Connect your Garmin account
-            </Link>
-            .
+            Don&apos;t have a `.FIT` file handy?{" "}
+            <Link href="/rounds/new" className="underline hover:text-foreground">
+              Enter a round manually
+            </Link>{" "}
+            instead — this is the primary way to get round data in, since Garmin&apos;s
+            developer API requires a paid account.
           </p>
         </section>
 

@@ -2,8 +2,9 @@
 
 Business logic lives here: the Strokes Gained engine, Tiger 5 / Clean Card Index
 evaluation, Smart Bag outlier rejection, .FIT/CSV parsers, R10/R50 delivery
-profiling, and hole-geometry/dispersion math. Built out across Phases 1, 2, 3,
-4, and 5 of [`docs/DEVELOPMENT_PLAN.md`](../../../../docs/DEVELOPMENT_PLAN.md).
+profiling, hole-geometry/dispersion math, and OSM course lookup. Built out
+across Phases 1–6 of
+[`docs/DEVELOPMENT_PLAN.md`](../../../../docs/DEVELOPMENT_PLAN.md).
 
 **Implemented (Phase 1):**
 - `benchmarks.py` — Strokes Gained benchmark curves (expected strokes to hole
@@ -57,5 +58,24 @@ Exposed via `GET /api/rounds/{id}/holes`, `GET /api/rounds/{id}/holes/{n}/replay
 and the `dispersion_ellipse` field added to `GET /api/bag/{user_id}`
 (`app/api/routes/rounds.py`, `app/api/routes/bag.py`).
 
+**Implemented (Phase 5):**
+- `osm_courses.py` — Searches OpenStreetMap's Overpass API (free, keyless)
+  for a golf course by name, then resolves each hole's tee/green by
+  nearest-endpoint matching against separate `golf=tee`/`golf=green`
+  features (OSM doesn't relation-link these to their hole in most
+  mappings), reusing `geometry.py`'s flat-earth yard-distance for both the
+  matching and the computed yardage. Every field is optional — coverage is
+  inconsistent — so this always degrades to manual entry rather than
+  failing. Unverifiable against the real Overpass API in this environment
+  (blocked by the sandbox's egress policy, same as Mapbox) — see module
+  docstring.
+
+Exposed via `GET /api/courses/search-osm` and
+`GET /api/courses/search-osm/{type}/{id}`; course/round/shot persistence
+itself (`POST /api/courses`, `POST /api/rounds`,
+`POST /api/rounds/{id}/shots/bulk`) lives directly in
+`app/api/routes/courses.py` / `app/api/routes/rounds.py` rather than a
+services module — it's CRUD, not business logic.
+
 **Not yet implemented:** prescriptive combine matching and the coach lesson
-brief export (Phase 5).
+brief export (Phase 6).
