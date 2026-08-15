@@ -76,7 +76,15 @@ def test_unknown_handicap_bucket_raises() -> None:
 
 def test_lie_without_benchmark_curve_raises() -> None:
     with pytest.raises(ValueError, match="lie"):
-        expected_strokes(0, Lie.penalty, 100)
+        expected_strokes(0, Lie.hole, 100)
+
+
+def test_penalty_lie_is_fairway_equivalent_plus_one_stroke() -> None:
+    for bucket in HANDICAP_BUCKETS:
+        for distance in (10, 100, 300):
+            assert expected_strokes(bucket, Lie.penalty, distance) == pytest.approx(
+                1 + expected_strokes(bucket, Lie.fairway, distance)
+            )
 
 
 def test_negative_distance_raises() -> None:

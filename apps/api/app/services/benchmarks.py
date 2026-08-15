@@ -105,6 +105,15 @@ def expected_strokes(handicap_bucket: int, lie: Lie, distance_yards: float) -> f
         raise ValueError(
             f"handicap_bucket must be one of {HANDICAP_BUCKETS}, got {handicap_bucket}"
         )
+    if lie == Lie.penalty:
+        # A penalty lie isn't a physical position with its own curve — it's a
+        # normal (fairway-equivalent) lie plus the one extra stroke the
+        # penalty costs. Deriving it this way (rather than seeding a separate
+        # curve) keeps SG telescoping exactly across a shot sequence: a row
+        # ending in `penalty` and the next row starting from `penalty` at the
+        # same distance always call this with identical arguments, so they
+        # cancel in `start - end` regardless of how this case is computed.
+        return 1 + expected_strokes(handicap_bucket, Lie.fairway, distance_yards)
     if lie not in SCRATCH_CURVES:
         raise ValueError(f"No strokes-gained benchmark curve defined for lie={lie!r}")
 
