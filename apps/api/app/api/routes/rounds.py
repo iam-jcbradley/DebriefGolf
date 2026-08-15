@@ -1,12 +1,14 @@
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from app.db.session import get_session
 from app.models import Hole, Round, Shot, User
 from app.services.approach import classify_approach_leave
+from app.services.parsers.fit_parser import parse_fit_activity
 from app.services.putting import evaluate_putting
 from app.services.strokes_gained import compute_round_strokes_gained
 from app.services.tiger_five import evaluate_round
@@ -17,6 +19,40 @@ router = APIRouter()
 @router.get("/rounds")
 def list_rounds(session: Annotated[Session, Depends(get_session)]) -> list[Round]:
     return list(session.exec(select(Round)).all())
+
+
+@router.post("/rounds/upload")
+async def upload_fit_activity(
+    user_id: int, file: UploadFile, session: Annotated[Session, Depends(get_session)]
+) -> dict:
+    """Ingest a Garmin `.FIT` activity file (PRD §4.1, §10 Phase 3): parses
+    it with `app.services.parsers.fit_parser`, then creates a `Round` with
+    no course or shots yet — course assignment and shot entry happen in the
+    audit wizard. Per PRD §4.3, a corrupted or coordinate-sparse file still
+    creates a round (flagged `casual_practice`), it isn't rejected.
+    """
+    user = session.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    contents = await file.read()
+    result = parse_fit_activity(contents)
+
+    round_ = Round(
+        user_id=user_id,
+        played_at=result.started_at or datetime.now(UTC),
+        status=result.status,
+    )
+    session.add(round_)
+    session.commit()
+    session.refresh(round_)
+
+    return {
+        "round_id": round_.id,
+        "status": round_.status.value,
+        "sport": result.sport,
+        "point_count": len(result.points),
+    }
 
 
 @router.get("/rounds/{round_id}/shots")
@@ -50,6 +86,16 @@ def get_round_analytics(
     shots = list(
         session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
     )
+    if not shots:
+        # A freshly-uploaded .FIT round (see POST /rounds/upload) has GPS
+        # points but no recorded shots yet — nothing to compute until it's
+        # been through the audit wizard.
+        return {
+            "round_id": round_id,
+            "status": round_.status.value,
+            "needs_shots": True,
+        }
+
     holes = {
         hole.id: hole
         for hole in session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()

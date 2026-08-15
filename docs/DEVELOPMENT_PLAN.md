@@ -42,17 +42,21 @@ Goal: turn ingested shot data into the diagnostic numbers the UI will display.
 
 **Acceptance criteria:** unit tests validate SG math against hand-computed examples per distance bracket, plus a telescoping-sum invariant test (`tests/test_strokes_gained.py`) that holds regardless of the specific benchmark curve values; Tiger 5/CCI tests cover each violation type including a regression test for a double-counting bug found during manual verification (a penalty event's "shot into the hazard" row and its penalty-marker row both end in `Lie.penalty` — only the marker row counts); outlier rejection tests confirm a synthetic outlier shot is excluded from Smart Bag stats. All endpoints manually verified end-to-end against a real Postgres 16 + PostGIS instance and the seeded demo round.
 
-## Phase 3 — Frontend Foundations & the "2-Minute Fast Audit" Wizard
+## Phase 3 — Frontend Foundations & the "2-Minute Fast Audit" Wizard (done, with noted gaps)
 
 Goal: users can get data in and see it rendered, even before maps/practice hub exist.
 
-- [ ] Replace the bootstrap placeholder dashboard with the real Round Snapshot + Tiger 5 Disaster Meter layout (PRD §8), wired to Phase 2 API endpoints.
-- [ ] `.FIT` file upload UI (drag-and-drop) calling the Phase 1 parser endpoint; shown automatically on Garmin webhook failure (PRD §4.3).
-- [ ] Audit wizard flow: Fringe vs. True Putting isolation prompt, "Insert Shot Between" timeline tool with coordinate snapping, penalty drop classifier (Lateral Hazard vs. OB/Lost Ball), strike-quality tagging modal for shots below -0.4 SG.
-- [ ] Garmin Connect OAuth 2.0 flow (frontend redirect + backend token exchange/storage).
-- [ ] IndexedDB layer for offline-friendly draft state during the audit wizard.
+- [x] Replaced the bootstrap placeholder dashboard with a real Round Snapshot + Tiger 5 Disaster Meter (`src/app/page.tsx`, `src/components/round-snapshot.tsx`, `src/components/tiger-five-meter.tsx`), wired to Phase 2's `/api/rounds` + `/api/rounds/{id}/analytics`. Added `CORSMiddleware` to the API (`app/main.py`) — the browser couldn't call the backend at all without it, caught during manual verification.
+- [x] `.FIT` file upload UI (`src/components/fit-upload.tsx`, drag-and-drop + click-to-browse), calling a new `POST /api/rounds/upload` endpoint (`app/api/routes/rounds.py`) that wires up Phase 1's `parse_fit_activity()`. Required making `Round.course_id` nullable (migration `3c7e5b1f9a20`) — a freshly-uploaded round has GPS points but no matched course yet.
+- [x] Audit wizard flow (`src/components/audit-wizard/`, logic in `src/lib/audit/`): penalty drop classifier (Lateral Hazard vs. OB/Lost Ball, matching the seed data's own conventions exactly), Fringe vs. True Putting isolation prompt, short-putt/long-putt routing, and a strike-quality tagging modal for shots below -0.4 SG. A `AuditWizard` shell sequences these over a draft shot list. **"Insert Shot Between" timeline tool with coordinate snapping is deferred** — it needs the map integration Phase 4 builds; there's no map component anywhere in the app yet to snap coordinates against.
+- [x] Garmin Connect OAuth 2.0 + PKCE plumbing (`app/services/garmin_oauth.py`, `app/api/routes/garmin_auth.py`, `src/app/settings/garmin/`): authorize/callback/status/disconnect all real and tested (mocked token exchange). **Cannot be verified against Garmin's actual servers** — no Garmin Developer Program credentials are available in this environment, and the exact authorize/token endpoint URLs must come from Garmin's Developer Portal (left blank rather than guessed — see `.env.example`). Manually verified the whole flow up to that boundary: clicking "Connect Garmin" surfaces a clear "not configured" error rather than failing silently.
+- [x] IndexedDB layer for offline-friendly audit wizard draft state (`src/lib/audit/draft-store.ts`, `use-audit-draft.ts`) — a round's in-progress review survives a refresh/remount. Tested with `fake-indexeddb`.
 
-**Acceptance criteria:** Vitest/RTL coverage for the wizard's branching logic (penalty classification, short-putt vs. long-putt routing); an end-to-end manual pass of uploading a sample `.FIT` file through to a rendered Round Snapshot.
+**Gaps carried forward, tracked here rather than silently glossed over:**
+- The audit wizard operates on a client-only draft shot list (`DraftShot`, keyed by hole *number*, not `hole_id`). There's no `POST /api/rounds/{id}/shots` endpoint yet, and submitting reviewed shots back to the backend needs a course assigned to the round first (course-matching or a manual course-picker — neither exists). The `/rounds/[id]/audit` page therefore includes its own manual "add a shot" form to demonstrate the review flow end-to-end rather than pulling real shots from a round.
+- Short-sided classification and lateral dispersion remain the Phase 2 proxies noted there — still waiting on Phase 4's spatial data.
+
+**Acceptance criteria:** Vitest/RTL coverage for the wizard's branching logic (penalty classification — including exact seed-data-scenario regression tests; short-putt vs. long-putt routing) — 115 frontend tests total. An end-to-end manual pass of uploading a sample `.FIT` file was run in a real browser (Playwright against Chromium) through to a rendered Round Snapshot for the *existing* seeded demo round, and separately through the full audit wizard flow (add shots → penalty → fringe isolation → putt routing → strike-quality tag → completion) for a fresh round — this manual pass caught two real bugs (missing CORS config; a decimal-distance input silently failing native HTML5 step validation), both fixed.
 
 ## Phase 4 — Hole Replay, Dispersion Maps & Strategy Engine
 

@@ -30,5 +30,13 @@ profiling. Built out across Phases 1, 2, and 5 of
 Exposed via `GET /api/rounds/{id}/analytics` and `GET /api/bag/{user_id}`
 (`app/api/routes/rounds.py`, `app/api/routes/bag.py`).
 
+**Implemented (Phase 3):**
+- `garmin_oauth.py` — Garmin Connect OAuth 2.0 + PKCE plumbing (authorize
+  URL construction, signed state token, code-for-token exchange). Real and
+  tested (mocked token endpoint) but unverifiable against Garmin's actual
+  servers in this environment — see module docstring.
+
+Exposed via `app/api/routes/garmin_auth.py`.
+
 **Not yet implemented:** prescriptive combine matching and the coach lesson
 brief export (Phase 5).
