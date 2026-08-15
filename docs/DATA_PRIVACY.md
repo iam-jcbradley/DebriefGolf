@@ -9,6 +9,8 @@ Debrief Golf processes two categories of data that trigger GDPR/CCPA obligations
 1. **Precise location data** — GPS shot coordinates, hole/green geometry, and derived dispersion patterns.
 2. **Third-party OAuth data** — Garmin Connect account linkage (OAuth 2.0 tokens) and the scorecard/activity data pulled through it.
 
+**Boundary note (Phase 5):** [`tools/garmin_import/`](../tools/garmin_import/) is a separate, personal-use CLI that authenticates to Garmin Connect with the user's own email/password (there's no OAuth path for this — see that tool's README for why) and caches session tokens *locally, on the user's own machine*. It never sends those credentials, or the session tokens derived from them, to this app's backend or database — only the `.FIT` files it downloads get uploaded, through the same `POST /api/rounds/upload` endpoint a manual drag-and-drop upload would use. This document's "Third-party OAuth data" category still accurately describes everything this app itself stores; the CLI tool's local credential handling is out of scope for this app's data-privacy surface by design, not by omission.
+
 ## To-dos before handling real user data (target: by Phase 3, per `docs/DEVELOPMENT_PLAN.md`)
 
 - [ ] **Legal basis for processing** — document the basis (consent vs. contract necessity) for GPS and OAuth data processing; surface it in a user-facing privacy notice at signup / Garmin account linking.
