@@ -1,0 +1,34 @@
+# --- Env / secrets ---
+.env
+.env.local
+.env.*.local
+
+# --- Node / Next.js (apps/web) ---
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+.pnpm-store/
+
+# --- Python / FastAPI (apps/api) ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# --- Coverage ---
+coverage/
+htmlcov/
+.coverage
+
+# --- Editors / OS ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+
+# --- Docker ---
+db_data/
