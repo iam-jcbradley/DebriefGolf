@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { NavBar } from "@/components/nav-bar";
+import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
 import {
   ApiError,
@@ -141,6 +142,7 @@ export default function GarminSettingsPage() {
     <div className="min-h-screen">
       <NavBar />
       <main className="mx-auto max-w-2xl px-6 py-10">
+        <SettingsTabs />
         <Suspense fallback={null}>
           <CallbackBanner />
         </Suspense>

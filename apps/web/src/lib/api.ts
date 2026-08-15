@@ -524,4 +524,27 @@ export function createVirtualRound(payload: VirtualRoundCreateInput): Promise<Vi
   });
 }
 
+// --- Data export & deletion (PRD §9.2, docs/DATA_PRIVACY.md) ---
+
+export interface UserDataExport {
+  user: { id: number; email: string; name: string; handicap_index: number; created_at: string };
+  garmin_connected: boolean;
+  rounds: unknown[];
+  practice_sessions: unknown[];
+  virtual_rounds: unknown[];
+}
+
+export function getUserDataExport(userId: number): Promise<UserDataExport> {
+  return apiFetch<UserDataExport>(`/api/users/${userId}/export`);
+}
+
+export interface DeleteUserResult {
+  deleted: boolean;
+  user_id: number;
+}
+
+export function deleteUserData(userId: number): Promise<DeleteUserResult> {
+  return apiFetch<DeleteUserResult>(`/api/users/${userId}`, { method: "DELETE" });
+}
+
 export { API_URL };

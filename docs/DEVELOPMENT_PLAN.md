@@ -113,7 +113,23 @@ Goal: close the loop from diagnosis to prescribed practice, and serve the PGA Co
 
 **Acceptance criteria:** 232 backend tests (40 new: `test_delivery_profile.py`, `test_practice_combines.py`, `test_practice_routes.py`, `test_virtual_rounds_routes.py`), ruff clean, migration verified to apply cleanly to a fresh Postgres+PostGIS instance. 268 frontend tests (26 new), eslint/tsc clean, production build succeeds with `/practice` at ~125kB First Load JS (recharts and `@react-pdf/renderer` both dynamically imported, so neither inflates the base bundle). Full manual, real-browser (Playwright/Chromium) pass against a real Postgres+PostGIS instance and the reseeded demo round: uploaded a real R10/R50 CSV fixture through the Practice Hub and watched the delivery profile, trend chart, and gapping table populate; logged a sim round through the Virtual Bag hub; and downloaded a real Coach-Ready Brief PDF from the dashboard, opened it, and visually confirmed every section (this is what caught both bugs noted above).
 
+## Phase 7 — Data Privacy & Retention (done, with noted gaps)
+
+Goal: close out the cross-cutting Data Privacy to-do below — overdue since "no later than Phase 3" — before any more real user data accumulates.
+
+- [x] `GET /api/users/{user_id}/export` + `DELETE /api/users/{user_id}` (`app/api/routes/privacy.py`): a JSON export of everything a user has put into the app, and a real hard delete (not a soft flag) of everything they own — shots, rounds, R10/R50 practice sessions/shots, virtual rounds, and the Garmin OAuth connection — in FK-safe order. `Course`/`Hole` rows are deliberately untouched since they're shared course reference geometry, not this user's data.
+- [x] `/settings/privacy` UI: a "Download my data" button, a "Delete my account" flow gated behind typing `DELETE` to confirm (irreversible, so no one-click destructive action), and a plain-language privacy notice covering legal basis, retention, and CCPA disclosure — explicitly labeled "Draft — pending legal review" in the product itself, not just in code comments, since `docs/DATA_PRIVACY.md` says this shouldn't be presented as a finished policy.
+- [x] `SettingsTabs` (`src/components/settings/`): a small shared sub-nav between `/settings/garmin` and the new `/settings/privacy` — neither is linked from the main `NavBar` (PRD §8's nav is a fixed 5-item list), so this is what ties the two settings pages together.
+- [x] `docs/DATA_PRIVACY.md` updated: every to-do item now points at real code, and the retention policy is explicit rather than implicit (no auto-purge — round/shot/practice data is retained until account deletion; Garmin tokens rotate on reconnect and are deleted on disconnect, unchanged from Phase 3).
+
+**Gaps carried forward:**
+- **The privacy notice itself is not legal-reviewed** — it's a good-faith engineering draft of the required disclosures, explicitly labeled as such in the UI. Actual launch requires counsel review, which is outside this repo's scope.
+- **No automated retention *enforcement*** — the policy (retain until deletion) doesn't require a background job to enforce, since there's no auto-expiry to run. If a future retention window is added (e.g. purge inactive accounts after N years), it would need one.
+- **Smart Bag baseline minimization has no code yet** — verified there's currently no pipeline aggregating real user shots into a shared baseline (`StrokesGainedBenchmark` is a fixed hand-authored curve, not user-derived), so there's nothing to minimize yet. Flagged in `DATA_PRIVACY.md` so it isn't forgotten if that pipeline is ever built.
+
+**Acceptance criteria:** 240 backend tests (8 new: `test_privacy_routes.py`, covering export shape, token exclusion, full deletion, and that shared `Course`/`Hole` data survives), ruff clean. 277 frontend tests (9 new), eslint/tsc clean, production build succeeds with `/settings/privacy` at ~124kB First Load JS. Full manual, real-browser (Playwright/Chromium) pass: downloaded a real JSON export for a seeded user and inspected its contents, then ran the full type-DELETE-to-confirm flow and verified via direct DB query that the user row and all owned rows were actually gone (not soft-deleted) while the shared course/hole data they'd played was left intact.
+
 ## Cross-cutting (ongoing, not a single phase)
 
-- **Data privacy:** user-triggered deletion of spatial/scorecard data, retention policy enforcement — see [`docs/DATA_PRIVACY.md`](./DATA_PRIVACY.md). Should land no later than Phase 3 (once real user data exists).
+- **Data privacy:** delivered as Phase 7 above — see [`docs/DATA_PRIVACY.md`](./DATA_PRIVACY.md) for the remaining non-engineering gap (legal review of the user-facing notice).
 - **CI:** keep `.github/workflows/ci.yml` green; add new test suites to the existing `backend`/`frontend` jobs rather than creating parallel pipelines.

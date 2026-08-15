@@ -39,7 +39,7 @@ beforeEach(() => {
 describe("GarminSettingsPage", () => {
   it("renders the connect panel with a user id input", () => {
     render(<GarminSettingsPage />);
-    expect(screen.getByText("Garmin Connect")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Garmin Connect" })).toBeInTheDocument();
     expect(screen.getByLabelText("User ID")).toBeInTheDocument();
   });
 
