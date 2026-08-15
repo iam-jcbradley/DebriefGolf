@@ -1,3 +1,4 @@
+import { Overline } from "@/components/ui/overline";
 import { cn } from "@/lib/utils";
 
 export type StatTileTone = "good" | "bad" | "neutral";
@@ -28,17 +29,31 @@ function glyphFor(tone: StatTileTone, indicator: StatTileIndicator): string | nu
   return tone === "good" ? "✓" : "⚠";
 }
 
-export function StatTile({ label, value, tone = "neutral", detail, indicator = "delta" }: StatTileProps) {
+/**
+ * The project's stat-display component — a large serif numeral with a
+ * small overline caption beneath, per docs/STYLE_GUIDE.md's "numeric/stat
+ * display" treatment. Named StatTile (not StatDisplay) for historical
+ * reasons: it predates the design system and is already threaded through
+ * RoundSnapshot/TigerFiveMeter/Smart Bag — the style guide notes this
+ * mapping explicitly.
+ */
+export function StatTile({
+  label,
+  value,
+  tone = "neutral",
+  detail,
+  indicator = "delta",
+}: StatTileProps) {
   const glyph = glyphFor(tone, indicator);
 
   return (
-    <div className="rounded-lg border bg-card p-4">
-      <p className="text-sm text-muted-foreground">{label}</p>
-      <p className={cn("text-2xl font-semibold", TONE_TEXT_CLASSES[tone])}>
+    <div className="border border-border bg-card px-4 py-3">
+      <p className={cn("stat-numeral text-3xl", TONE_TEXT_CLASSES[tone])}>
         {glyph && <span aria-hidden="true">{glyph} </span>}
         {value}
       </p>
-      {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
+      <Overline className="mt-1.5">{label}</Overline>
+      {detail && <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>}
     </div>
   );
 }

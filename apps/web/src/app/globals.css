@@ -11,11 +11,13 @@
   --color-status-critical: var(--status-critical);
   --color-delta-good-text: var(--delta-good-text);
   --color-delta-bad-text: var(--delta-bad-text);
+  --color-accent-hover: var(--accent-hover);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
+  --font-sans: var(--font-geist-sans);
+  --font-serif: var(--font-serif);
   --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-heading: var(--font-serif);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -55,85 +57,93 @@
 }
 
 :root {
-  /* Status palette (fixed — never themed; see the dataviz skill's palette.md). */
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #d03b3b;
-  --delta-good-text: #006300;
-  --delta-bad-text: #d03b3b;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.145 0 0);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --secondary: oklch(0.97 0 0);
-  --secondary-foreground: oklch(0.205 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --radius: 0.625rem;
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  /* Editorial private-club palette — see docs/STYLE_GUIDE.md. Status colors
+     are deliberately retinted to sit inside the aged-paper palette (not the
+     dataviz skill's default vivid set) for brand coherence across the whole
+     app; their semantic roles (good=green, warning=amber, critical=rust)
+     are preserved. */
+  --status-good: #3f6b4a;
+  --status-warning: #b9812c;
+  --status-serious: #b15b36;
+  --status-critical: #9c4530;
+  --delta-good-text: #2f5a3a;
+  --delta-bad-text: #8c3f2c;
+
+  --background: #f3eee1;
+  --foreground: #211d17;
+  --card: #fbf8f0;
+  --card-foreground: #211d17;
+  --popover: #fbf8f0;
+  --popover-foreground: #211d17;
+  --primary: #28402f;
+  --primary-foreground: #f6f2e6;
+  --accent-hover: #1d3123;
+  --secondary: #e7dfcb;
+  --secondary-foreground: #211d17;
+  --muted: #eae2ce;
+  --muted-foreground: #726a5a;
+  --accent: #eae2ce;
+  --accent-foreground: #211d17;
+  --destructive: #9c4530;
+  --border: #ded2b4;
+  --input: #ded2b4;
+  --ring: #28402f;
+  --chart-1: #28402f;
+  --chart-2: #b9812c;
+  --chart-3: #9c4530;
+  --chart-4: #726a5a;
+  --chart-5: #ded2b4;
+  --radius: 0.1875rem;
+  --sidebar: #f3eee1;
+  --sidebar-foreground: #211d17;
+  --sidebar-primary: #28402f;
+  --sidebar-primary-foreground: #f6f2e6;
+  --sidebar-accent: #eae2ce;
+  --sidebar-accent-foreground: #211d17;
+  --sidebar-border: #ded2b4;
+  --sidebar-ring: #28402f;
 }
 
 .dark {
-  --status-good: #0ca30c;
-  --status-warning: #fab219;
-  --status-serious: #ec835a;
-  --status-critical: #e66767;
-  --delta-good-text: #0ca30c;
-  --delta-bad-text: #e66767;
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --card: oklch(0.205 0 0);
-  --card-foreground: oklch(0.985 0 0);
-  --popover: oklch(0.205 0 0);
-  --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --secondary: oklch(0.269 0 0);
-  --secondary-foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
-  --chart-1: oklch(0.87 0 0);
-  --chart-2: oklch(0.556 0 0);
-  --chart-3: oklch(0.439 0 0);
-  --chart-4: oklch(0.371 0 0);
-  --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
-  --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --status-good: #7fa382;
+  --status-warning: #d9a64e;
+  --status-serious: #d08259;
+  --status-critical: #c97a5c;
+  --delta-good-text: #8fbb93;
+  --delta-bad-text: #d08259;
+
+  --background: #1b1712;
+  --foreground: #f3eee1;
+  --card: #221d16;
+  --card-foreground: #f3eee1;
+  --popover: #221d16;
+  --popover-foreground: #f3eee1;
+  --primary: #7fa382;
+  --primary-foreground: #161310;
+  --accent-hover: #99b99c;
+  --secondary: #2c2620;
+  --secondary-foreground: #f3eee1;
+  --muted: #2c2620;
+  --muted-foreground: #b3a88e;
+  --accent: #2c2620;
+  --accent-foreground: #f3eee1;
+  --destructive: #c97a5c;
+  --border: #3a3226;
+  --input: #3a3226;
+  --ring: #7fa382;
+  --chart-1: #7fa382;
+  --chart-2: #d9a64e;
+  --chart-3: #c97a5c;
+  --chart-4: #b3a88e;
+  --chart-5: #3a3226;
+  --sidebar: #1b1712;
+  --sidebar-foreground: #f3eee1;
+  --sidebar-primary: #7fa382;
+  --sidebar-primary-foreground: #161310;
+  --sidebar-accent: #2c2620;
+  --sidebar-accent-foreground: #f3eee1;
+  --sidebar-border: #3a3226;
+  --sidebar-ring: #7fa382;
 }
 
 @layer base {
@@ -145,5 +155,20 @@
   }
   html {
     @apply font-sans;
+  }
+}
+
+@layer components {
+  /* Uppercase, letter-spaced label — "ROUND SUMMARY", "TODAY'S DEBRIEF".
+     True OpenType small-caps aren't reliable across the sans/serif pairing,
+     so this approximates the effect with tracking + size instead. */
+  .overline {
+    @apply text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase;
+  }
+
+  /* Large serif numeral for stat callouts — tabular so a column of scores
+     lines up. Pair with an .overline caption underneath. */
+  .stat-numeral {
+    @apply font-serif text-4xl leading-none font-medium tabular-nums;
   }
 }

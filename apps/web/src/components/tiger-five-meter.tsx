@@ -1,5 +1,7 @@
-import type { RoundAnalytics } from "@/lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Overline } from "@/components/ui/overline";
 import { StatTile } from "@/components/stat-tile";
+import type { RoundAnalytics } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 type TigerFive = RoundAnalytics["tiger_five"];
@@ -33,45 +35,48 @@ export function TigerFiveMeter({ tigerFive }: TigerFiveMeterProps) {
   const tone = meterTone(cci);
 
   return (
-    <section aria-labelledby="tiger-five-heading" className="rounded-xl border p-4">
-      <h2 id="tiger-five-heading" className="text-lg font-semibold">
-        Tiger 5 Disaster Meter
-      </h2>
+    <Card aria-labelledby="tiger-five-heading">
+      <CardHeader>
+        <Overline>Where It Went Wrong</Overline>
+        <CardTitle id="tiger-five-heading">Tiger 5 Disaster Meter</CardTitle>
+      </CardHeader>
 
-      <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {VIOLATIONS.map(({ key, label }) => {
-          const count = tigerFive[key];
-          return (
-            <StatTile
-              key={key}
-              label={label}
-              value={String(count)}
-              tone={count === 0 ? "good" : "bad"}
-              indicator="status"
-            />
-          );
-        })}
-      </dl>
+      <CardContent>
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {VIOLATIONS.map(({ key, label }) => {
+            const count = tigerFive[key];
+            return (
+              <StatTile
+                key={key}
+                label={label}
+                value={String(count)}
+                tone={count === 0 ? "good" : "bad"}
+                indicator="status"
+              />
+            );
+          })}
+        </dl>
 
-      <div className="mt-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Clean Card Index</span>
-          <span className="font-semibold">{cci}%</span>
-        </div>
-        <div
-          role="meter"
-          aria-valuenow={cci}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Clean Card Index"
-          className="mt-1 h-2 w-full overflow-hidden rounded-full bg-muted"
-        >
+        <div className="mt-5 border-t border-border pt-4">
+          <div className="flex items-center justify-between">
+            <Overline>Clean Card Index</Overline>
+            <span className="font-serif text-lg font-medium tabular-nums">{cci}%</span>
+          </div>
           <div
-            className={cn("h-full rounded-full", METER_FILL_CLASSES[tone])}
-            style={{ width: `${cci}%` }}
-          />
+            role="meter"
+            aria-valuenow={cci}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="Clean Card Index"
+            className="mt-2 h-1.5 w-full overflow-hidden bg-muted"
+          >
+            <div
+              className={cn("h-full", METER_FILL_CLASSES[tone])}
+              style={{ width: `${cci}%` }}
+            />
+          </div>
         </div>
-      </div>
-    </section>
+      </CardContent>
+    </Card>
   );
 }

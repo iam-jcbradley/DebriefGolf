@@ -8,6 +8,7 @@ import NewRoundPage from "./page";
 vi.mock("next/navigation", () => ({
   useRouter: vi.fn(),
   useSearchParams: vi.fn(),
+  usePathname: () => "/rounds/new",
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {

@@ -25,6 +25,7 @@ vi.mock("mapbox-gl", () => ({
 
 vi.mock("next/navigation", () => ({
   useParams: vi.fn(),
+  usePathname: () => "/rounds/1",
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {

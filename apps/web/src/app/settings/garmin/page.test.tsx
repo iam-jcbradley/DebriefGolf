@@ -11,6 +11,7 @@ import GarminSettingsPage from "./page";
 
 vi.mock("next/navigation", () => ({
   useSearchParams: vi.fn(),
+  usePathname: () => "/settings/garmin",
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {

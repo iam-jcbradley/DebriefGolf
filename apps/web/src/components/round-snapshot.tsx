@@ -1,5 +1,7 @@
-import type { RoundAnalytics, RoundSummary, SGCategory } from "@/lib/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Overline } from "@/components/ui/overline";
 import { StatTile, type StatTileTone } from "@/components/stat-tile";
+import type { RoundAnalytics, RoundSummary, SGCategory } from "@/lib/api";
 
 const CATEGORY_LABELS: Record<SGCategory, string> = {
   OTT: "SG: Off the Tee",
@@ -26,46 +28,47 @@ export interface RoundSnapshotProps {
   analytics: RoundAnalytics;
 }
 
+const TONE_TEXT_CLASSES: Record<StatTileTone, string> = {
+  good: "text-delta-good-text",
+  bad: "text-delta-bad-text",
+  neutral: "text-foreground",
+};
+
 export function RoundSnapshot({ round, analytics }: RoundSnapshotProps) {
   const totalTone = toneFor(analytics.strokes_gained.total);
 
   return (
-    <section aria-labelledby="round-snapshot-heading" className="rounded-xl border p-4">
-      <h2 id="round-snapshot-heading" className="text-lg font-semibold">
-        Round Snapshot
-      </h2>
-      <p className="text-sm text-muted-foreground">
-        Score: {round.total_score ?? "—"} · Handicap bucket: {analytics.handicap_bucket}
-      </p>
+    <Card aria-labelledby="round-snapshot-heading">
+      <CardHeader>
+        <Overline>Round Summary</Overline>
+        <CardTitle id="round-snapshot-heading">Round Snapshot</CardTitle>
+        <p className="text-sm text-muted-foreground">
+          Score: {round.total_score ?? "—"} · Handicap bucket: {analytics.handicap_bucket}
+        </p>
+      </CardHeader>
 
-      <dl className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {CATEGORY_ORDER.map((category) => {
-          const value = analytics.strokes_gained.by_category[category];
-          return (
-            <StatTile
-              key={category}
-              label={CATEGORY_LABELS[category]}
-              value={formatSigned(value)}
-              tone={toneFor(value)}
-            />
-          );
-        })}
-      </dl>
+      <CardContent>
+        <dl className="grid grid-cols-2 gap-3">
+          {CATEGORY_ORDER.map((category) => {
+            const value = analytics.strokes_gained.by_category[category];
+            return (
+              <StatTile
+                key={category}
+                label={CATEGORY_LABELS[category]}
+                value={formatSigned(value)}
+                tone={toneFor(value)}
+              />
+            );
+          })}
+        </dl>
 
-      <p className="mt-4 text-sm">
-        Total Strokes Gained:{" "}
-        <span
-          className={
-            totalTone === "good"
-              ? "font-semibold text-delta-good-text"
-              : totalTone === "bad"
-                ? "font-semibold text-delta-bad-text"
-                : "font-semibold"
-          }
-        >
-          {formatSigned(analytics.strokes_gained.total)}
-        </span>
-      </p>
-    </section>
+        <p className="mt-5 border-t border-border pt-4 text-sm">
+          Total Strokes Gained:{" "}
+          <span className={`font-semibold ${TONE_TEXT_CLASSES[totalTone]}`}>
+            {formatSigned(analytics.strokes_gained.total)}
+          </span>
+        </p>
+      </CardContent>
+    </Card>
   );
 }

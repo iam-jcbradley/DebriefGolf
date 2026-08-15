@@ -49,13 +49,13 @@ describe("DashboardPage", () => {
   it("shows a loading state before data arrives", () => {
     mockGetRounds.mockReturnValue(new Promise(() => {})); // never resolves
     render(<DashboardPage />);
-    expect(screen.getByText(/Loading your latest round/)).toBeInTheDocument();
+    expect(screen.getByText(/Loading your round/)).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no rounds", async () => {
     mockGetRounds.mockResolvedValue([]);
     render(<DashboardPage />);
-    expect(await screen.findByText("No rounds yet")).toBeInTheDocument();
+    expect(await screen.findByText("No rounds logged yet.")).toBeInTheDocument();
   });
 
   it("fetches analytics for the most recently played round, not the first in the list", async () => {
