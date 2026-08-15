@@ -226,7 +226,7 @@ def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_
     practice_session_ids = list(
         session.exec(select(PracticeSession.id).where(PracticeSession.user_id == user_id)).all()
     )
-    iron_smash_factors: list[float] = []
+    smash_factor_by_iron: dict[str, list[float]] = defaultdict(list)
     if practice_session_ids:
         iron_shots = list(
             session.exec(
@@ -236,14 +236,16 @@ def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_
                 )
             ).all()
         )
-        iron_smash_factors = [s.smash_factor for s in iron_shots if s.smash_factor is not None]
+        for shot in iron_shots:
+            if shot.smash_factor is not None:
+                smash_factor_by_iron[shot.club].append(shot.smash_factor)
 
     putting = evaluate_putting(on_course_shots)
 
     signals = [
         detect_approach_weakness(approach_bracket_sg),
         detect_driver_dispersion_weakness(driver_lateral_stdev),
-        detect_iron_strike_weakness(iron_smash_factors),
+        detect_iron_strike_weakness(smash_factor_by_iron),
         detect_putting_lag_weakness(putting.lag_efficiency_pct, putting.lag_putt_count),
     ]
     signals = [s for s in signals if s is not None]

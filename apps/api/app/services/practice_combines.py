@@ -15,29 +15,76 @@ import statistics
 from dataclasses import dataclass
 from enum import StrEnum
 
+# --- Calibration notes ---
+#
+# Every threshold below is grounded one of two ways, and each detector's
+# docstring says which:
+#
+# 1. **Matched to the combine's own PRD §7.1 target metric** (driver
+#    dispersion, putting lag) — the detector fires exactly when the player
+#    hasn't yet met the bar the drill itself is designed to clear. This is
+#    the strongest grounding available: it's not a guess, it's the same
+#    number the product already commits to elsewhere.
+# 2. **Grounded in commonly-published launch-monitor averages** (iron
+#    strike quality) where PRD gives one flat number but the real
+#    expectation varies by club — e.g. TrackMan's publicly shared average
+#    smash-factor-by-club figures. These are order-of-magnitude accurate,
+#    widely repeated in golf instruction content, hand-authored into this
+#    table rather than transcribed from a licensed dataset — the same
+#    caveat `app/models/benchmark.py`'s `SCRATCH_CURVES` already carries
+#    for Strokes Gained.
+#
+# The approach-100-125y detector is the one exception: there's no PRD
+# target metric in the same units as on-course Strokes Gained to align to,
+# so it uses SG < 0 relative to the player's own handicap bucket (i.e.
+# "losing strokes to your own baseline from this distance") — this
+# implementation's own calibration, not sourced from either PRD or a
+# published benchmark.
+
 # A shot short game/approach into the "traditional wedge" window is where
 # distance control drills like the 9-Ball Wedge Matrix apply (PRD §7.1).
 APPROACH_WEAKNESS_MIN_YARDS = 100.0
 APPROACH_WEAKNESS_MAX_YARDS = 125.0
-# Below-zero average Strokes Gained in that window means this player is
-# losing strokes to the field from exactly the distance the drill targets.
 APPROACH_WEAKNESS_SG_THRESHOLD = 0.0
-MIN_APPROACH_SAMPLE = 3
+# 3 shots from this precise a distance bracket is easy to hit by chance in
+# one bad round; 5 asks for a small pattern across (typically) 2+ rounds.
+MIN_APPROACH_SAMPLE = 5
 
 # PRD §7.1's target metric for the 30-Yard Corridor Test is a <15y lateral
 # miss; a driver whose *empirical* on-course lateral spread already exceeds
 # that is the weakness the drill is meant to catch.
 DRIVER_DISPERSION_LATERAL_STDEV_THRESHOLD_YARDS = 15.0
 
-# PRD §7.1's Low-Point Compression target is smash factor >1.36; flag a
-# player averaging meaningfully below that on their irons.
-IRON_SMASH_FACTOR_THRESHOLD = 1.30
-MIN_IRON_SAMPLE = 3
+# Expected average smash factor per iron (see calibration note above) —
+# smash factor falls with loft (more of the club's energy goes into spin
+# and launch angle, less into ball speed), so a single flat cutoff across
+# every iron either misses long-iron strikers who are actually struggling
+# or wrongly flags short-iron/wedge players who are hitting it fine for
+# that club. Only covers `app.services.smart_bag.CLUB_ORDER`'s "N-Iron"
+# entries (2-9) — PW/GW/AW/SW/LW are wedges, out of this weakness's scope.
+EXPECTED_SMASH_FACTOR_BY_IRON: dict[str, float] = {
+    "2-Iron": 1.42,
+    "3-Iron": 1.41,
+    "4-Iron": 1.39,
+    "5-Iron": 1.38,
+    "6-Iron": 1.36,
+    "7-Iron": 1.33,
+    "8-Iron": 1.30,
+    "9-Iron": 1.28,
+}
+# Flag a club as underperforming once its average falls this far below its
+# own expected value — a small buffer so normal shot-to-shot noise on a
+# handful of swings doesn't trip the detector.
+IRON_SMASH_FACTOR_DEFICIT_THRESHOLD = 0.05
+MIN_IRON_SAMPLES_PER_CLUB = 3
 
 # PRD §7.1's Safety Circle Test target is >=80% of lag putts inside 3ft;
 # flag a player who isn't clearing that bar today.
-PUTTING_LAG_EFFICIENCY_THRESHOLD_PCT = 70.0
-MIN_LAG_PUTT_SAMPLE = 3
+PUTTING_LAG_EFFICIENCY_THRESHOLD_PCT = 80.0
+# Lag putts (>20ft) are a minority of a round's ~14-18 putts; 5 typically
+# needs 2+ rounds on file, enough to smooth over one unusually bad putting
+# day.
+MIN_LAG_PUTT_SAMPLE = 5
 
 
 class Weakness(StrEnum):
@@ -139,19 +186,58 @@ def detect_driver_dispersion_weakness(
     )
 
 
+@dataclass(frozen=True)
+class _IronDeficit:
+    club: str
+    avg_smash_factor: float
+    expected: float
+    shot_count: int
+
+    @property
+    def deficit(self) -> float:
+        return self.expected - self.avg_smash_factor
+
+
 def detect_iron_strike_weakness(
-    iron_smash_factors: list[float],
+    smash_factor_by_iron: dict[str, list[float]],
 ) -> WeaknessSignal | None:
-    """`iron_smash_factors`: R10/R50 `PracticeShot.smash_factor` values for
-    every iron shot on file (`app.services.delivery_profile`)."""
-    if len(iron_smash_factors) < MIN_IRON_SAMPLE:
+    """`smash_factor_by_iron`: R10/R50 `PracticeShot.smash_factor` values
+    (`app.services.delivery_profile`), grouped by club — *not* flattened
+    into one list, since "underperforming" only means something relative
+    to each club's own expected smash factor (see
+    `EXPECTED_SMASH_FACTOR_BY_IRON`'s calibration note above).
+
+    Flags on the single worst-performing qualifying club, not an average
+    deficit across every iron: averaging would let one genuinely bad club
+    (a real problem) get diluted by the rest of an otherwise-fine bag,
+    which is the opposite of "prescriptive" — the whole point is to name
+    which specific club needs the drill.
+    """
+    deficits: list[_IronDeficit] = []
+    for club, factors in smash_factor_by_iron.items():
+        expected = EXPECTED_SMASH_FACTOR_BY_IRON.get(club)
+        if expected is None or len(factors) < MIN_IRON_SAMPLES_PER_CLUB:
+            continue
+        avg = statistics.fmean(factors)
+        deficits.append(
+            _IronDeficit(
+                club=club, avg_smash_factor=avg, expected=expected, shot_count=len(factors)
+            )
+        )
+
+    if not deficits:
         return None
-    avg = statistics.fmean(iron_smash_factors)
-    if avg >= IRON_SMASH_FACTOR_THRESHOLD:
+
+    worst = max(deficits, key=lambda d: d.deficit)
+    if worst.deficit < IRON_SMASH_FACTOR_DEFICIT_THRESHOLD:
         return None
+
     return WeaknessSignal(
         weakness=Weakness.iron_strike_quality,
-        detail=f"Average iron smash factor is {avg:.2f} over {len(iron_smash_factors)} shots.",
+        detail=(
+            f"{worst.club} is averaging {worst.avg_smash_factor:.2f} smash factor "
+            f"(expected ~{worst.expected:.2f}) over {worst.shot_count} shots."
+        ),
     )
 
 

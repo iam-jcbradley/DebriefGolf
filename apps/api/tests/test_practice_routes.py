@@ -157,13 +157,15 @@ class TestPracticeCombinesEndpoint:
         assert body["combines"] == []
 
     def test_flags_iron_strike_weakness_from_practice_shots(self) -> None:
+        # 7-Iron's expected smash factor is ~1.33 (app/services/practice_combines.py);
+        # 3+ shots meaningfully below that for one club is enough to flag.
         user_id = _seed_user()
         _seed_practice_session(
             user_id,
             [
                 {"club": "7-Iron", "smash_factor": 1.15},
                 {"club": "7-Iron", "smash_factor": 1.18},
-                {"club": "8-Iron", "smash_factor": 1.20},
+                {"club": "7-Iron", "smash_factor": 1.17},
             ],
         )
 
@@ -191,7 +193,7 @@ class TestPracticeCombinesEndpoint:
             session.add(round_)
             session.commit()
             session.refresh(round_)
-            for i in range(3):
+            for i in range(5):
                 session.add(
                     Shot(round_id=round_.id, hole_id=hole.id, shot_number=i + 1, club="9-Iron",
                          start_lie=Lie.fairway, end_lie=Lie.sand,
