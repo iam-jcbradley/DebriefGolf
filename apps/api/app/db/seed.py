@@ -1,10 +1,14 @@
-"""Populate the database with one realistic demo round for local development/testing.
+"""Populate the database with reference and demo data for local development/testing.
 
-Produces a single Course (18 holes), a demo User, and a Round scored 78 (+6 on a
-par-72) with shot-by-shot detail — including a handful of scenarios the PRD's
-diagnostics are meant to catch: a short-sided bunker approach (PRD §8's example),
-a 3-putt, a penalty stroke inside 150y, and a par-5 bogey — so downstream
-analytics (Phase 2+) has something realistic to chew on.
+`seed_benchmarks()` populates the Strokes Gained benchmark lookup table
+(reference data the Phase 2 SG engine benchmarks against).
+
+`seed()` produces a single Course (18 holes), a demo User, and a Round scored
+78 (+6 on a par-72) with shot-by-shot detail — including a handful of
+scenarios the PRD's diagnostics are meant to catch: a short-sided bunker
+approach (PRD §8's example), a 3-putt, a penalty stroke inside 150y, and a
+par-5 bogey — so downstream analytics (Phase 2+) has something realistic to
+chew on.
 
 Usage: uv run python -m app.db.seed
 """
@@ -15,7 +19,8 @@ from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
 
 from app.db.session import engine
-from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
+from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, StrokesGainedBenchmark, User
+from app.services.benchmarks import generate_benchmark_rows
 
 DEMO_EMAIL = "demo@debriefgolf.app"
 COURSE_NAME = "Pinehurst Creek Golf Club"
@@ -173,6 +178,24 @@ def build_hole_shots(number: int, par: int, yardage: float) -> list[dict]:
     return _par_shots(par, yardage)
 
 
+def seed_benchmarks() -> None:
+    """Populate the Strokes Gained benchmark lookup table (PRD §5.1, §10 Phase 1).
+
+    Independent of `seed()` below — this is reference data the SG engine
+    benchmarks against, not sample round data.
+    """
+    with Session(engine) as session:
+        existing = session.exec(select(StrokesGainedBenchmark).limit(1)).first()
+        if existing:
+            print("strokes_gained_benchmark already populated; skipping.")
+            return
+
+        rows = generate_benchmark_rows()
+        session.add_all(StrokesGainedBenchmark(**row) for row in rows)
+        session.commit()
+        print(f"Seeded {len(rows)} Strokes Gained benchmark rows.")
+
+
 def seed() -> None:
     with Session(engine) as session:
         existing = session.exec(select(User).where(User.email == DEMO_EMAIL)).first()
@@ -253,4 +276,5 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
+    seed_benchmarks()
     seed()

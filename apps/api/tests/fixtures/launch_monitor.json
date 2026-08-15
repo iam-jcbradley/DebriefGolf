@@ -1,0 +1,32 @@
+{
+  "shots": [
+    {
+      "club": "Driver",
+      "club speed": 105.0,
+      "ball speed": 153.4,
+      "smash factor": 1.46,
+      "launch angle": 11.9,
+      "spin rate": 2380,
+      "spin axis": -2.4,
+      "club path": -1.2,
+      "face angle": -0.3,
+      "carry": 254.1,
+      "total": 271.0,
+      "date": "2026-08-11T10:05:00"
+    },
+    {
+      "club": "6-Iron",
+      "club speed": 88.3,
+      "ball speed": 119.7,
+      "smash factor": null,
+      "launch angle": 15.8,
+      "spin rate": 5600,
+      "spin axis": 0.8,
+      "club path": -2.1,
+      "face angle": 1.1,
+      "carry": 178.6,
+      "total": 187.3,
+      "date": "2026-08-11T10:12:00"
+    }
+  ]
+}
