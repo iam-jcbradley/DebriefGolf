@@ -5,7 +5,15 @@ from sqlmodel import SQLModel
 
 from alembic import context
 from app.core.config import settings
-from app.models import Course, Hole, Round, Shot, StrokesGainedBenchmark, User  # noqa: F401
+from app.models import (  # noqa: F401
+    Course,
+    GarminConnection,
+    Hole,
+    Round,
+    Shot,
+    StrokesGainedBenchmark,
+    User,
+)
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

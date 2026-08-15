@@ -43,6 +43,18 @@ cd apps/web && pnpm install && pnpm dev
 cd apps/api && uv sync && uv run uvicorn app.main:app --reload
 ```
 
+## Getting round data in
+
+Two ways: upload a `.FIT` file (drag-and-drop in the web app, or via
+`POST /api/rounds/upload`), or enter a round manually with GPS-mapped
+shots (`/rounds/new` — see Phase 5 in the development plan). Garmin's
+official Health/Developer API requires a paid account, so there's no
+built-in auto-sync; [`tools/garmin_import/`](./tools/garmin_import/) is an
+optional, personal-use CLI that pulls your own `.FIT` files out of Garmin
+Connect using your own login and feeds them into the upload endpoint above
+— it runs entirely on your machine and never sends your Garmin credentials
+to this app. See that directory's README before using it.
+
 ## Tests & linting
 
 ```bash
