@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { CoachBriefButton } from "@/components/coach-brief/coach-brief-button";
 import { FitUpload } from "@/components/fit-upload";
 import { NavBar } from "@/components/nav-bar";
 import { RoundSnapshot } from "@/components/round-snapshot";
@@ -120,6 +121,9 @@ export default function DashboardPage() {
                 View hole-by-hole replay
               </Link>
             </p>
+            <div className="mt-4">
+              <CoachBriefButton round={state.round} analytics={state.analytics} />
+            </div>
           </>
         )}
       </main>

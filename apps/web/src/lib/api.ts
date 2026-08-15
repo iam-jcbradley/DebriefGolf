@@ -393,4 +393,135 @@ export function disconnectGarmin(userId: number): Promise<GarminStatus> {
   return apiFetch<GarminStatus>(`/api/auth/garmin/${userId}`, { method: "DELETE" });
 }
 
+// --- Practice Hub: R10/R50 delivery profile + combines (PRD §6.1, §7.1, §10 Phase 6) ---
+
+export interface ClubDeliveryProfile {
+  club: string;
+  shot_count: number;
+  avg_club_path_deg: number | null;
+  avg_face_angle_deg: number | null;
+  avg_face_to_path_deg: number | null;
+  avg_spin_axis_deg: number | null;
+  avg_smash_factor: number | null;
+  avg_carry_yards: number | null;
+}
+
+export interface DeliveryTrendPoint {
+  session_id: number;
+  recorded_at: string;
+  shot_count: number;
+  avg_carry_yards: number | null;
+  avg_smash_factor: number | null;
+  avg_face_to_path_deg: number | null;
+  avg_spin_axis_deg: number | null;
+}
+
+export interface SimVsRealGapping {
+  club: string;
+  range_carry_mean_yards: number | null;
+  on_course_carry_mean_yards: number | null;
+  delta_yards: number | null;
+}
+
+export interface DeliveryProfile {
+  user_id: number;
+  session_count: number;
+  clubs: ClubDeliveryProfile[];
+  trend: Record<string, DeliveryTrendPoint[]>;
+  sim_vs_real_gapping: SimVsRealGapping[];
+}
+
+export function getDeliveryProfile(userId: number): Promise<DeliveryProfile> {
+  return apiFetch<DeliveryProfile>(`/api/practice/delivery/${userId}`);
+}
+
+export interface PracticeUploadResult {
+  session_id: number;
+  shot_count: number;
+  errors: string[];
+}
+
+export function uploadPracticeSession(
+  userId: number,
+  source: string,
+  file: File
+): Promise<PracticeUploadResult> {
+  const formData = new FormData();
+  formData.append("file", file);
+  return apiFetch<PracticeUploadResult>(
+    `/api/practice/sessions/upload?user_id=${userId}&source=${encodeURIComponent(source)}`,
+    { method: "POST", body: formData }
+  );
+}
+
+export type Weakness =
+  | "approach_100_125"
+  | "driver_dispersion"
+  | "iron_strike_quality"
+  | "putting_lag_speed";
+
+export interface WeaknessSignal {
+  weakness: Weakness;
+  detail: string;
+}
+
+export interface Combine {
+  weakness: Weakness;
+  name: string;
+  instructions: string;
+  target_metric: string;
+  video_search_url: string;
+}
+
+export interface PracticeCombines {
+  user_id: number;
+  weaknesses: WeaknessSignal[];
+  combines: Combine[];
+}
+
+export function getPracticeCombines(userId: number): Promise<PracticeCombines> {
+  return apiFetch<PracticeCombines>(`/api/practice/combines/${userId}`);
+}
+
+// --- Virtual/Sim Round Hub (PRD §6.2, §10 Phase 6) ---
+//
+// Deliberately a separate table and separate endpoints from Round/RoundStatus
+// above — see app/models/virtual_round.py for why this is never allowed to
+// feed a real-world handicap calculation.
+
+export type SimPlatform = "home_tee_hero" | "e6" | "gspro" | "other";
+
+export interface VirtualRound {
+  id: number;
+  user_id: number;
+  platform: SimPlatform;
+  course_name: string;
+  played_at: string;
+  holes_played: number;
+  total_score: number | null;
+  notes: string | null;
+}
+
+export interface VirtualRoundCreateInput {
+  user_id: number;
+  platform: SimPlatform;
+  course_name: string;
+  played_at?: string;
+  holes_played?: number;
+  total_score?: number | null;
+  notes?: string | null;
+}
+
+export function getVirtualRounds(userId: number): Promise<VirtualRound[]> {
+  return apiFetch<VirtualRound[]>(`/api/virtual-rounds?user_id=${userId}`);
+}
+
+export function createVirtualRound(payload: VirtualRoundCreateInput): Promise<VirtualRound> {
+  return apiFetch<VirtualRound>("/api/virtual-rounds", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
 export { API_URL };

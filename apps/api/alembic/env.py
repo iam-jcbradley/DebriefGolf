@@ -9,10 +9,13 @@ from app.models import (  # noqa: F401
     Course,
     GarminConnection,
     Hole,
+    PracticeSession,
+    PracticeShot,
     Round,
     Shot,
     StrokesGainedBenchmark,
     User,
+    VirtualRound,
 )
 
 # this is the Alembic Config object, which provides
