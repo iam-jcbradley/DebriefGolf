@@ -1,9 +1,24 @@
 import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { SWRConfig } from "swr";
 import DashboardPage from "./page";
 import { getRoundAnalytics, getRounds } from "@/lib/api";
 import type { RoundAnalytics, RoundSummary } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
+
+// SWR's default cache is a module-level singleton, shared across every test
+// in this file unless given a fresh one — every test here signs in as the
+// same `testUser.id`, so without this, "shows a loading state before data
+// arrives" (whose mocked fetch never resolves, on purpose) would poison
+// every test that runs after it: same cache key, same permanently-pending
+// entry. See SWR's own "Testing" docs for this exact pattern.
+function renderDashboard() {
+  return render(
+    <SWRConfig value={{ provider: () => new Map() }}>
+      <DashboardPage />
+    </SWRConfig>
+  );
+}
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -71,20 +86,20 @@ describe("DashboardPage", () => {
       signOut: vi.fn(),
       refresh: vi.fn(),
     });
-    render(<DashboardPage />);
+    renderDashboard();
     expect(screen.getByText("Sign in to continue")).toBeInTheDocument();
     expect(mockGetRounds).not.toHaveBeenCalled();
   });
 
   it("shows a loading state before data arrives", () => {
     mockGetRounds.mockReturnValue(new Promise(() => {})); // never resolves
-    render(<DashboardPage />);
+    renderDashboard();
     expect(screen.getByText(/Loading your round/)).toBeInTheDocument();
   });
 
   it("shows an empty state when there are no rounds", async () => {
     mockGetRounds.mockResolvedValue([]);
-    render(<DashboardPage />);
+    renderDashboard();
     expect(await screen.findByText("No rounds logged yet.")).toBeInTheDocument();
   });
 
@@ -92,7 +107,7 @@ describe("DashboardPage", () => {
     mockGetRounds.mockResolvedValue([recentRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
-    render(<DashboardPage />);
+    renderDashboard();
 
     await screen.findByText("Round Snapshot");
     // Only the latest round is fetched — not every round ever played.
@@ -106,7 +121,7 @@ describe("DashboardPage", () => {
     mockGetRounds.mockResolvedValue([recentRound, olderRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
-    render(<DashboardPage />);
+    renderDashboard();
 
     await screen.findByText("Round Snapshot");
     expect(mockGetRoundAnalytics).toHaveBeenCalledWith(recentRound.id);
@@ -119,7 +134,7 @@ describe("DashboardPage", () => {
       round_id: 2, status: "needs_audit", needs_shots: true,
     });
 
-    render(<DashboardPage />);
+    renderDashboard();
 
     expect(await screen.findByText("Round uploaded — audit needed")).toBeInTheDocument();
   });
@@ -128,7 +143,7 @@ describe("DashboardPage", () => {
     mockGetRounds.mockResolvedValue([recentRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
-    render(<DashboardPage />);
+    renderDashboard();
 
     expect(await screen.findByText("Round Snapshot")).toBeInTheDocument();
     expect(screen.getByText("Tiger 5 Disaster Meter")).toBeInTheDocument();
@@ -137,7 +152,7 @@ describe("DashboardPage", () => {
   it("shows an error message when fetching fails", async () => {
     mockGetRounds.mockRejectedValue(new Error("network down"));
 
-    render(<DashboardPage />);
+    renderDashboard();
 
     expect(await screen.findByRole("alert")).toHaveTextContent("network down");
   });

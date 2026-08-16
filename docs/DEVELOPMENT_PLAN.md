@@ -547,24 +547,92 @@ registry access is blocked (see the Docker build gap above), but
 `postgresql-16-postgis-3` installs cleanly via `apt`, which isn't, so a real
 local Postgres stood in for `docker compose`'s where Phase 9/11 had neither.
 
-## Phase 13 — Frontend Data Layer & Error Boundaries
+## Phase 13 — Frontend Data Layer & Error Boundaries (done, with noted gaps)
 
 Goal: `use-dashboard-data.ts`, `use-practice-data.ts`, and
-`use-virtual-rounds.ts` each hand-roll loading/error/cancel/refresh state. The
-implementations are careful — the `cancelled` flag handling is correct — but
-the pattern is now written three times, and there's no caching, dedupe, retry,
-or revalidation, so every navigation refetches from scratch.
+`use-virtual-rounds.ts` each hand-rolled loading/error/cancel/refresh state. The
+implementations were careful — the `cancelled` flag handling was correct — but
+the pattern was written three times, and there was no caching, dedupe, retry,
+or revalidation, so every navigation refetched from scratch.
 
-- [ ] Adopt SWR or TanStack Query and collapse the three hooks onto it.
-- [ ] Add `error.tsx`, `loading.tsx`, and `not-found.tsx` — none exist anywhere
-  under `apps/web/src/app/`, so a throw in any segment hits Next's default
-  screen, including from the map components most likely to throw.
-- [ ] Remove the dashboard's request waterfall (`getRounds` → client-side sort →
-  `getRoundAnalytics`) once Phase 11 adds the server-side "latest round" query.
+- [x] **Adopted SWR, collapsed the three hooks onto it.** Chose SWR over
+  TanStack Query for its smaller surface — this app has no mutations
+  sophisticated enough to need TanStack's cache-write helpers, just
+  read-and-refetch, which is SWR's whole design center. All three hooks
+  (`use-dashboard-data.ts`, `use-practice-data.ts`, `use-virtual-rounds.ts`)
+  keep their exact external `{ state, refresh }` shape — every page that
+  consumes them (`page.tsx`, `practice/page.tsx`, `virtual-bag/page.tsx`)
+  needed no change beyond the signature swap below, and neither did the two
+  page tests that mock the hook module directly rather than exercising SWR
+  for real.
+  - **Real fix, not just a swap: cache keys are scoped by user id, not a
+    `signedIn` boolean.** All three hooks used to take `signedIn: boolean`;
+    since `current-user.tsx`'s sign-in/sign-out is a client-side state
+    change with no forced page reload, a `useSWR("dashboard-round", ...)`
+    keyed only by a fixed string would have let SWR's cache serve player
+    A's cached round to player B for a moment after A signs out and B signs
+    in in the same tab, before revalidating — exactly the class of bug
+    Phase 8/10 exist to close. Hooks now take `userId: number | null`
+    (`useDashboardData(user?.id ?? null)` etc.) and key on
+    `["dashboard-round", userId]`; `null` both disables the fetch (SWR's
+    key-is-null convention) and reports `idle`, same as before.
+  - **Found and fixed a real test-isolation bug along the way, in
+    `page.test.tsx`.** SWR's default cache is a module-level singleton
+    shared across every test in a file. Every test in that file signs in as
+    the same `testUser.id`, so all eight tests shared one cache entry — and
+    since the second test (`shows a loading state before data arrives`)
+    deliberately mocks a fetch that never resolves, every test after it
+    inherited that permanently-pending entry and hung until timeout. Fixed
+    by wrapping each render in a fresh `<SWRConfig value={{ provider: () =>
+    new Map() }}>` (SWR's own documented pattern for exactly this), not by
+    changing the hooks — this was purely a test-isolation gap the migration
+    exposed.
+- [x] **Added `error.tsx`, `loading.tsx`, `not-found.tsx`** at the app root
+  (`src/app/`) — styled consistently with the rest of the app (`Card`,
+  `Overline`, `NavBar`), not left as Next's unstyled defaults.
+  `error.tsx` logs the caught error and offers "Try again" (calls Next's
+  `reset()`) and a full, non-client-side navigation back to the dashboard —
+  deliberately a plain `<a>`, not `<Link>`, so whatever broke doesn't ride
+  along through client-side routing on the way out. Verified in a real
+  browser (Chromium via Playwright): a real 404 on an unmatched route
+  renders the new styled page, not Next's default.
+- [x] **Dashboard's request waterfall.** Already resolved by Phase 11's
+  `?limit=1` server-side query, not new work here — confirmed by reading
+  `use-dashboard-data.ts` before touching it: `getRounds({ limit: 1 })` is
+  the only round fetch, no client-side sort over the full list survives.
+  What's left (`getRounds` → `getRoundAnalytics`) is an inherent dependency
+  — the second call needs the first's result — not a waterfall a data
+  library removes; SWR doesn't change that shape, just how the two-step
+  fetch's loading/error/cache state is managed.
 
-**Acceptance criteria:** no bespoke fetch-state machines left in `src/lib`; a
-forced throw in a route segment renders a recoverable error UI rather than the
-framework default.
+**Gaps carried forward:**
+- **No global `SWRConfig`.** Every hook relies on SWR's built-in defaults
+  (revalidate-on-focus, etc.), which are reasonable for this app's size; a
+  provider would only be worth adding for a deliberate override, and there
+  isn't one yet.
+- **`loading.tsx`'s actual trigger condition is narrow.** It's Next's
+  route-segment-transition fallback, not a stand-in for what each page's own
+  "Loading round…"/"Loading practice data…" text already covers for the
+  client-side SWR fetch — those aren't redundant with it, they cover
+  different moments, but it means `loading.tsx` itself is rarely seen in
+  this app's current all-client-components shape. Kept anyway: cheap, and
+  it's exactly what the App Router convention expects to find.
+- **No dedicated error boundary for the map components specifically** —
+  Phase 4 already gave `HoleReplayMap`/`CourseGeometryMap` their own
+  internal fallback-to-SVG recovery, so today's root `error.tsx` is a
+  second, unreached safety net for them rather than the primary one. Still
+  the right thing to have for everything else.
+
+**Acceptance criteria:** no bespoke fetch-state machines left in `src/lib` —
+`use-dashboard-data.ts`, `use-practice-data.ts`, and `use-virtual-rounds.ts`
+are all thin wrappers around `useSWR` now. 306 frontend tests (5 new:
+`error.test.tsx`, `not-found.test.tsx`, `loading.test.tsx`), eslint clean,
+`tsc`/production build clean (`postcss`/`sharp` overrides from Phase 12 still
+in place). A forced throw renders the new `error.tsx` rather than Next's
+default (unit-tested directly with a thrown `Error` and a mocked `reset`); an
+unmatched route renders the new `not-found.tsx`, verified in a real browser
+(Chromium via Playwright) against the dev server, not just asserted in
+jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
 
 ## Backlog (not yet scheduled into a phase)
 

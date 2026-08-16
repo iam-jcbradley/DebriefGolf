@@ -12,7 +12,7 @@ import { useVirtualRounds } from "@/lib/use-virtual-rounds";
 
 export default function VirtualBagPage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = useVirtualRounds(user !== null);
+  const { state, refresh } = useVirtualRounds(user?.id ?? null);
 
   return (
     <div className="min-h-screen">
