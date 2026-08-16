@@ -10,9 +10,14 @@ from app.api.routes.practice import router as practice_router
 from app.api.routes.privacy import router as privacy_router
 from app.api.routes.rounds import router as rounds_router
 from app.api.routes.virtual_rounds import router as virtual_rounds_router
+from app.api.uploads import RequestSizeLimitMiddleware
 from app.core.config import settings
 
 app = FastAPI(title="Debrief Golf API")
+
+# Outermost: rejects an oversized request before routing or body parsing,
+# so an upload that's far too large never gets spooled. See app/api/uploads.py.
+app.add_middleware(RequestSizeLimitMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

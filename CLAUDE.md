@@ -117,6 +117,21 @@ Fernet key for the encrypted `garmin_connection` columns. This bites in tests
 too: monkeypatching `settings.secret_key` after logging a test client in makes
 every subsequent request 401.
 
+**Endpoints that walk all of a user's shots select raw columns, not ORM
+objects.** `GET /bag` and both practice endpoints read every shot a player has
+recorded; building that many `Shot` instances costs ~5x what the five columns
+they actually read cost. `app/services/shot_view.py` defines the `ShotView`
+protocol those services accept — a `Shot` satisfies it, and so does a
+`select(Shot.club, ...)` row. Single-round endpoints still load full objects;
+the difference there is a few dozen rows. `scripts/benchmark.py` is how any of
+this gets checked — measure before changing.
+
+**`GET /rounds/{id}/analytics` must stay read-only.** It used to write computed
+Strokes Gained back to every shot on every call. Stored SG is written when
+shots are recorded (`POST /rounds/{id}/shots/bulk`) and when handicap index
+changes (`PATCH /api/auth/me`); `tiger_five` takes the values as an argument
+rather than reading them off ORM objects a GET had to mutate first.
+
 **Integrations that can't be verified here.** Garmin OAuth, the Overpass API, and
 Mapbox are all unreachable from the dev sandbox (Garmin's API also requires a paid
 developer account, which is why manual entry became the primary ingestion path).

@@ -95,17 +95,22 @@ describe("DashboardPage", () => {
     render(<DashboardPage />);
 
     await screen.findByText("Round Snapshot");
-    expect(mockGetRounds).toHaveBeenCalledWith();
+    // Only the latest round is fetched — not every round ever played.
+    expect(mockGetRounds).toHaveBeenCalledWith({ limit: 1 });
   });
 
-  it("fetches analytics for the most recently played round, not the first in the list", async () => {
-    mockGetRounds.mockResolvedValue([olderRound, recentRound]);
+  it("fetches analytics for the round the API returns first", async () => {
+    // Ordering is the server's job now (`ORDER BY played_at DESC LIMIT 1`),
+    // not a client-side sort over the full list — see the backend's
+    // test_list_rounds_returns_only_the_callers_rounds for that guarantee.
+    mockGetRounds.mockResolvedValue([recentRound, olderRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
     render(<DashboardPage />);
 
     await screen.findByText("Round Snapshot");
     expect(mockGetRoundAnalytics).toHaveBeenCalledWith(recentRound.id);
+    expect(mockGetRoundAnalytics).not.toHaveBeenCalledWith(olderRound.id);
   });
 
   it("shows an audit-needed message when the round has no shots yet", async () => {

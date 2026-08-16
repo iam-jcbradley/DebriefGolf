@@ -32,3 +32,5 @@ htmlcov/
 
 # --- Docker ---
 db_data/
+
+# Throwaway database created by apps/api/scripts/benchmark.py

@@ -26,7 +26,7 @@ from app.models import (
 router = APIRouter()
 
 
-def _serialize_shots(session: Session, round_ids: list[int]) -> dict[int, list[dict]]:
+def _serialize_shots(session: Session, user_id: int, round_ids: list[int]) -> dict[int, list[dict]]:
     """Shots grouped by round_id, using a raw-column select rather than
     `select(Shot)` — geoalchemy2 hands back a non-JSON-serializable
     `WKBElement` for `location` on the ORM object, the same pitfall
@@ -48,7 +48,9 @@ def _serialize_shots(session: Session, round_ids: list[int]) -> dict[int, list[d
             Shot.tag,
             func.ST_Y(Shot.location).label("lat"),
             func.ST_X(Shot.location).label("lng"),
-        ).where(Shot.round_id.in_(round_ids))
+        )
+        .join(Round, Shot.round_id == Round.id)
+        .where(Round.user_id == user_id)
     ).all()
 
     by_round: dict[int, list[dict]] = {round_id: [] for round_id in round_ids}
@@ -84,7 +86,9 @@ def export_user_data(user: CurrentUser, session: SessionDep) -> dict:
     rounds = list(
         session.exec(select(Round).where(Round.user_id == user_id).order_by(Round.played_at)).all()
     )
-    shots_by_round = _serialize_shots(session, [r.id for r in rounds if r.id is not None])
+    shots_by_round = _serialize_shots(
+        session, user_id, [r.id for r in rounds if r.id is not None]
+    )
 
     practice_sessions = list(
         session.exec(
@@ -97,7 +101,9 @@ def export_user_data(user: CurrentUser, session: SessionDep) -> dict:
     practice_shots_by_session: dict[int, list[dict]] = {sid: [] for sid in practice_session_ids}
     if practice_session_ids:
         for shot in session.exec(
-            select(PracticeShot).where(PracticeShot.session_id.in_(practice_session_ids))
+            select(PracticeShot)
+            .join(PracticeSession, PracticeShot.session_id == PracticeSession.id)
+            .where(PracticeSession.user_id == user_id)
         ).all():
             practice_shots_by_session[shot.session_id].append(
                 {
@@ -173,50 +179,25 @@ def delete_user_data(user: CurrentUser, session: SessionDep, response: Response)
     """Real deletion (DATA_PRIVACY.md: "a real deletion..., not a
     soft/hidden flag") of everything this user owns: shots, rounds, R10/R50
     practice shots and sessions, virtual rounds, the Garmin OAuth
-    connection, and the user row itself — in FK-safe child-before-parent
-    order. Shared reference data (`Course`/`Hole`, the SG benchmark table)
-    is untouched, since it isn't this user's data to delete.
+    connection, and the user row itself.
     """
     user_id = user.id
-    round_ids = list(session.exec(select(Round.id).where(Round.user_id == user_id)).all())
-    if round_ids:
-        for shot in session.exec(select(Shot).where(Shot.round_id.in_(round_ids))).all():
-            session.delete(shot)
-    for round_ in session.exec(select(Round).where(Round.user_id == user_id)).all():
-        session.delete(round_)
 
-    practice_session_ids = list(
-        session.exec(select(PracticeSession.id).where(PracticeSession.user_id == user_id)).all()
-    )
-    if practice_session_ids:
-        for shot in session.exec(
-            select(PracticeShot).where(PracticeShot.session_id.in_(practice_session_ids))
-        ).all():
-            session.delete(shot)
-    for practice_session in session.exec(
-        select(PracticeSession).where(PracticeSession.user_id == user_id)
-    ).all():
-        session.delete(practice_session)
-
-    for virtual_round in session.exec(
-        select(VirtualRound).where(VirtualRound.user_id == user_id)
-    ).all():
-        session.delete(virtual_round)
-
-    garmin_connection = session.exec(
-        select(GarminConnection).where(GarminConnection.user_id == user_id)
-    ).first()
-    if garmin_connection:
-        session.delete(garmin_connection)
-
+    # One statement. Every table that holds this user's data has an
+    # ON DELETE CASCADE foreign key back to `user` (or to `round` /
+    # `practice_session`, which cascade in turn) as of Phase 11, so Postgres
+    # removes the children. This used to load every shot, round, practice
+    # shot, practice session and virtual round into Python and delete them
+    # one at a time in FK-safe order — correct, but O(everything the user
+    # ever recorded) round trips, and a new child table would have silently
+    # been missed.
+    #
+    # Shared reference data (`Course`/`Hole`, the SG benchmark table) has no
+    # cascade to here by design: it isn't this user's data to delete, per
+    # DATA_PRIVACY.md.
     session.delete(user)
     session.commit()
 
-    # The session token is stateless and outlives the row it names, so
-    # clear the cookie here — otherwise the browser keeps sending a validly
-    # signed session for an account that no longer exists (which
-    # `get_current_user` rejects, but as a confusing 401 rather than a
-    # clean logged-out state).
     clear_session_cookie(response)
 
     return {"deleted": True, "user_id": user_id}

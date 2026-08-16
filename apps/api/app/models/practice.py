@@ -15,7 +15,7 @@ class PracticeSession(SQLModel, table=True):
     __tablename__ = "practice_session"
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", index=True)
+    user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
     source: str
     recorded_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -33,7 +33,7 @@ class PracticeShot(SQLModel, table=True):
     __tablename__ = "practice_shot"
 
     id: int | None = Field(default=None, primary_key=True)
-    session_id: int = Field(foreign_key="practice_session.id", index=True)
+    session_id: int = Field(foreign_key="practice_session.id", index=True, ondelete="CASCADE")
     club: str = Field(index=True)
     club_speed_mph: float | None = None
     ball_speed_mph: float | None = None

@@ -66,17 +66,29 @@ def test_analytics_endpoint_returns_expected_shape(
     assert body["shots"][2]["category"] == "PUTT"
 
 
-def test_analytics_endpoint_persists_strokes_gained_on_shots(
+def test_analytics_endpoint_does_not_write(
     auth_client: TestClient, db_session: Session, user: User
 ) -> None:
+    """This endpoint used to recompute Strokes Gained and write it back to
+    every shot in the round on every call — a non-idempotent GET on the
+    dashboard's hot path. Stored SG is now written when shots are recorded
+    (see `POST /rounds/{id}/shots/bulk`), and reads leave it alone."""
     round_id = _seed_round_with_shots(db_session, user)
+    sentinel = -12.5
+    for shot in db_session.exec(select(Shot).where(Shot.round_id == round_id)).all():
+        shot.strokes_gained = sentinel
+        db_session.add(shot)
+    db_session.commit()
 
-    auth_client.get(f"/api/rounds/{round_id}/analytics")
+    response = auth_client.get(f"/api/rounds/{round_id}/analytics")
+    assert response.status_code == 200
+    # The response still reports freshly-computed SG...
+    assert response.json()["shots"][0]["strokes_gained"] != sentinel
 
-    shots = db_session.exec(
-        select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)
-    ).all()
-    assert all(s.strokes_gained is not None for s in shots)
+    db_session.expire_all()
+    stored = db_session.exec(select(Shot).where(Shot.round_id == round_id)).all()
+    # ...but nothing was written.
+    assert [s.strokes_gained for s in stored] == [sentinel] * len(stored)
 
 
 def test_analytics_endpoint_404_for_unknown_round(auth_client: TestClient) -> None:

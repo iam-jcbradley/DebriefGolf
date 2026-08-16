@@ -5,10 +5,11 @@ delta, and prescriptive practice combine recommendations.
 
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.api.uploads import read_upload
 from app.models import PracticeSession, PracticeShot, Round, Shot
 from app.services.delivery_profile import (
     SessionShotRow,
@@ -30,6 +31,7 @@ from app.services.practice_combines import (
     recommend_combines,
 )
 from app.services.putting import evaluate_putting
+from app.services.shot_view import ShotView
 from app.services.smart_bag import CLUB_ORDER, compute_club_gapping, shot_carry_distance
 
 router = APIRouter()
@@ -41,6 +43,7 @@ IRON_CLUBS = {club for club in CLUB_ORDER if "Iron" in club}
 async def upload_practice_session(
     source: str,
     file: UploadFile,
+    request: Request,
     user: CurrentUser,
     session: SessionDep,
 ) -> dict:
@@ -52,7 +55,7 @@ async def upload_practice_session(
     header-alias tolerance. Malformed rows don't abort the upload; they're
     reported back alongside the created session.
     """
-    contents = await file.read()
+    contents = await read_upload(file, request)
     is_json = (file.filename or "").lower().endswith(".json")
     result = (
         parse_launch_monitor_json(contents) if is_json else parse_launch_monitor_csv(contents)
@@ -96,11 +99,22 @@ async def upload_practice_session(
     }
 
 
-def _fetch_on_course_shots(session: Session, user_id: int) -> list[Shot]:
-    round_ids = list(session.exec(select(Round.id).where(Round.user_id == user_id)).all())
-    if not round_ids:
-        return []
-    return list(session.exec(select(Shot).where(Shot.round_id.in_(round_ids))).all())
+def _fetch_on_course_shots(session: Session, user_id: int) -> list[ShotView]:
+    """Every on-course shot this user has recorded, as raw columns rather
+    than ORM objects — see app/services/shot_view.py for why."""
+    return list(
+        session.exec(
+            select(
+                Shot.club,
+                Shot.start_distance_yards,
+                Shot.end_distance_yards,
+                Shot.end_lie,
+                Shot.strokes_gained,
+            )
+            .join(Round, Shot.round_id == Round.id)
+            .where(Round.user_id == user_id)
+        ).all()
+    )
 
 
 def _on_course_club_gapping(shots: list[Shot]) -> list:
@@ -127,7 +141,11 @@ def get_delivery_profile(user: CurrentUser, session: SessionDep) -> dict:
     practice_shots: list[PracticeShot] = []
     if session_ids:
         practice_shots = list(
-            session.exec(select(PracticeShot).where(PracticeShot.session_id.in_(session_ids))).all()
+            session.exec(
+                select(PracticeShot)
+                .join(PracticeSession, PracticeShot.session_id == PracticeSession.id)
+                .where(PracticeSession.user_id == user.id)
+            ).all()
         )
 
     profile = compute_delivery_profile(practice_shots)
@@ -214,22 +232,15 @@ def get_practice_combines(user: CurrentUser, session: SessionDep) -> dict:
         driver_stats.lateral.stdev if driver_stats and driver_stats.lateral else None
     )
 
-    practice_session_ids = list(
-        session.exec(select(PracticeSession.id).where(PracticeSession.user_id == user.id)).all()
-    )
     smash_factor_by_iron: dict[str, list[float]] = defaultdict(list)
-    if practice_session_ids:
-        iron_shots = list(
-            session.exec(
-                select(PracticeShot).where(
-                    PracticeShot.session_id.in_(practice_session_ids),
-                    PracticeShot.club.in_(IRON_CLUBS),
-                )
-            ).all()
-        )
-        for shot in iron_shots:
-            if shot.smash_factor is not None:
-                smash_factor_by_iron[shot.club].append(shot.smash_factor)
+    iron_shots = session.exec(
+        select(PracticeShot)
+        .join(PracticeSession, PracticeShot.session_id == PracticeSession.id)
+        .where(PracticeSession.user_id == user.id, PracticeShot.club.in_(IRON_CLUBS))
+    ).all()
+    for shot in iron_shots:
+        if shot.smash_factor is not None:
+            smash_factor_by_iron[shot.club].append(shot.smash_factor)
 
     putting = evaluate_putting(on_course_shots)
 

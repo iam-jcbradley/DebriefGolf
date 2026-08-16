@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from app.models.shot import Shot
+from app.services.shot_view import ShotView
 
 DEFAULT_IQR_MULTIPLIER = 1.5
 # Below this many samples, an IQR is too noisy to be a meaningful outlier
@@ -125,7 +125,7 @@ def compute_gaps(stats: list[ClubGappingStats]) -> list[ClubGap]:
     ]
 
 
-def shot_carry_distance(shot: Shot) -> float | None:
+def shot_carry_distance(shot: ShotView) -> float | None:
     """Approximate on-course "carry" for a full-swing shot as the GPS
     distance closed: start_distance - end_distance. Not meaningful for
     putts (no club, or club == "Putter") — those don't measure a carry."""

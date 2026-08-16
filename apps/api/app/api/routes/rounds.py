@@ -2,13 +2,14 @@ import json
 from collections import defaultdict
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from geoalchemy2.elements import WKTElement
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import bindparam, func, update
 from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.api.uploads import read_upload
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 from app.services.approach import classify_approach_leave
 from app.services.parsers.fit_parser import parse_fit_activity
@@ -32,18 +33,98 @@ def _owned_round(round_id: int, user: User, session: Session) -> Round:
     return round_
 
 
+def _persist_round_strokes_gained(session: Session, round_id: int, handicap_index: float) -> None:
+    """Recomputes and stores `Shot.strokes_gained` for one round.
+
+    The stored column is what `GET /practice/combines`, the export and the
+    hole replay all read. It's written here — when shots are recorded — and
+    when the owner's handicap index changes, rather than on every analytics
+    read, which is what it used to be.
+    """
+    shots = list(
+        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
+    )
+    if not shots:
+        return
+
+    holes = {
+        hole.id: hole
+        for hole in session.exec(
+            select(Hole).join(Round, Hole.course_id == Round.course_id).where(Round.id == round_id)
+        ).all()
+    }
+    if not all(shot.hole_id in holes for shot in shots):
+        # A shot whose hole isn't on the round's current course — nothing
+        # coherent to compute against. Leave the column alone.
+        return
+
+    summary = compute_round_strokes_gained(
+        [(shot, holes[shot.hole_id].par) for shot in shots], handicap_index
+    )
+
+    # One executemany rather than a statement per shot. Deliberately against
+    # the Core table rather than the ORM entity: `session.execute(update(Shot),
+    # [rows])` is interpreted as an ORM bulk-update-by-primary-key and demands
+    # an `id` in every row, which isn't the statement wanted here.
+    shot_table = Shot.__table__
+    session.execute(
+        update(shot_table)
+        .where(shot_table.c.id == bindparam("b_id"))
+        .values(strokes_gained=bindparam("b_sg")),
+        [{"b_id": r.shot_id, "b_sg": r.strokes_gained} for r in summary.shots if r.shot_id],
+    )
+    session.commit()
+
+
+def refresh_user_strokes_gained(session: Session, user: User) -> None:
+    """Recomputes stored SG across every round this user has played.
+
+    Called when their handicap index changes (`PATCH /api/auth/me`), since
+    the SG benchmark bucket is derived from it — without this, the stored
+    values silently describe the handicap they used to have.
+    """
+    for round_id in session.exec(select(Round.id).where(Round.user_id == user.id)).all():
+        _persist_round_strokes_gained(session, round_id, user.handicap_index)
+
+
+# Enough for a season of golf in one response, small enough that nobody
+# accidentally serializes a decade of rounds to render "your latest round".
+DEFAULT_ROUND_LIMIT = 50
+MAX_ROUND_LIMIT = 200
+
+
 @router.get("/rounds")
-def list_rounds(user: CurrentUser, session: SessionDep) -> list[Round]:
+def list_rounds(
+    user: CurrentUser,
+    session: SessionDep,
+    limit: int = DEFAULT_ROUND_LIMIT,
+    offset: int = 0,
+) -> list[Round]:
     """This user's rounds, most recent first.
 
-    Until Phase 10 the `user_id` filter was optional, so an unfiltered call
-    returned every round in the database — which is what once let the
+    Paginated as of Phase 11: this was unbounded, and the dashboard fetched
+    *every* round only to sort them client-side and use the newest one — so
+    the cost of loading the front page grew with every round ever played.
+    It now asks for `?limit=1`.
+
+    Until Phase 10 the `user_id` filter was optional too, so an unfiltered
+    call returned every round in the database, which is what once let the
     dashboard show whichever player's round happened to be newest globally.
-    Scoping is no longer something the caller can opt out of.
     """
+    if limit < 1 or limit > MAX_ROUND_LIMIT:
+        raise HTTPException(
+            status_code=422, detail=f"limit must be between 1 and {MAX_ROUND_LIMIT}"
+        )
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must not be negative")
+
     return list(
         session.exec(
-            select(Round).where(Round.user_id == user.id).order_by(Round.played_at.desc())
+            select(Round)
+            .where(Round.user_id == user.id)
+            .order_by(Round.played_at.desc(), Round.id.desc())
+            .limit(limit)
+            .offset(offset)
         ).all()
     )
 
@@ -154,6 +235,8 @@ def create_shots_bulk(
     # re-reading `shot.location` off the refreshed ORM object — geoalchemy2
     # hands that back as a `WKBElement`, which isn't JSON-serializable (see
     # the same fix on `GET /rounds/{round_id}/shots` above).
+    _persist_round_strokes_gained(session, round_id, user.handicap_index)
+
     result = []
     for shot, s in created:
         session.refresh(shot)
@@ -177,7 +260,7 @@ def create_shots_bulk(
 
 @router.post("/rounds/upload")
 async def upload_fit_activity(
-    file: UploadFile, user: CurrentUser, session: SessionDep
+    file: UploadFile, request: Request, user: CurrentUser, session: SessionDep
 ) -> dict:
     """Ingest a Garmin `.FIT` activity file (PRD §4.1, §10 Phase 3): parses
     it with `app.services.parsers.fit_parser`, then creates a `Round` with
@@ -185,7 +268,7 @@ async def upload_fit_activity(
     audit wizard. Per PRD §4.3, a corrupted or coordinate-sparse file still
     creates a round (flagged `casual_practice`), it isn't rejected.
     """
-    contents = await file.read()
+    contents = await read_upload(file, request)
     result = parse_fit_activity(contents)
 
     round_ = Round(
@@ -286,12 +369,13 @@ def get_round_analytics(
         [(shot, holes[shot.hole_id].par) for shot in shots], handicap_index
     )
 
-    sg_by_shot_id = {r.shot_id: r for r in sg_summary.shots}
-    for shot in shots:
-        result = sg_by_shot_id.get(shot.id)
-        shot.strokes_gained = result.strokes_gained if result else None
-        session.add(shot)
-    session.commit()
+    # Read-only. This used to write the computed SG back onto every shot in
+    # the round and commit — a GET that mutated the database on the
+    # dashboard's hot path, non-idempotent and taking a write lock on every
+    # load. The values are persisted when shots are recorded instead (see
+    # `_persist_round_strokes_gained`); Tiger 5 gets them passed in rather
+    # than reading them off ORM objects this endpoint had to mutate first.
+    sg_by_shot_id = {r.shot_id: r.strokes_gained for r in sg_summary.shots}
 
     shots_by_hole: dict[int, list[Shot]] = defaultdict(list)
     for shot in shots:
@@ -300,7 +384,8 @@ def get_round_analytics(
         [
             (holes[hole_id].number, holes[hole_id].par, hole_shots)
             for hole_id, hole_shots in shots_by_hole.items()
-        ]
+        ],
+        strokes_gained=sg_by_shot_id,
     )
     putting = evaluate_putting(shots)
 
@@ -353,9 +438,16 @@ def list_round_holes(
         select(Hole).where(Hole.course_id == round_.course_id).order_by(Hole.number)
     ).all()
 
-    shot_counts: dict[int, int] = defaultdict(int)
-    for shot in session.exec(select(Shot).where(Shot.round_id == round_id)).all():
-        shot_counts[shot.hole_id] += 1
+    # GROUP BY rather than loading every shot in the round to count them in
+    # Python — this endpoint only ever needed the counts.
+    shot_counts = {
+        hole_id: count
+        for hole_id, count in session.exec(
+            select(Shot.hole_id, func.count())
+            .where(Shot.round_id == round_id)
+            .group_by(Shot.hole_id)
+        ).all()
+    }
 
     return [
         {

@@ -19,6 +19,7 @@ from app.api.deps import (
     clear_session_cookie,
     set_session_cookie,
 )
+from app.api.routes.rounds import refresh_user_strokes_gained
 from app.core.security import WeakPasswordError, hash_password, verify_password
 from app.models import User
 
@@ -135,10 +136,19 @@ def update_current_user(
         if not name:
             raise HTTPException(status_code=422, detail="Name is required")
         user.name = name
+    handicap_changed = (
+        payload.handicap_index is not None and payload.handicap_index != user.handicap_index
+    )
     if payload.handicap_index is not None:
         user.handicap_index = payload.handicap_index
 
     session.add(user)
     session.commit()
     session.refresh(user)
+
+    if handicap_changed:
+        # Stored `Shot.strokes_gained` is benchmarked against the handicap
+        # bucket, so it now describes a handicap this player no longer has.
+        refresh_user_strokes_gained(session, user)
+
     return UserOut.of(user)

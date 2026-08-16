@@ -15,6 +15,7 @@ stricter, simpler bar than "no Tiger 5 violation", and the one usually
 meant by the term.
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from app.models.shot import Lie, Shot
@@ -56,19 +57,37 @@ class TigerFiveSummary:
     clean_card_index: float  # 0-100, rounded to 1 decimal
 
 
-def evaluate_hole(hole_number: int, par: int, shots: list[Shot]) -> HoleResult:
+def evaluate_hole(
+    hole_number: int,
+    par: int,
+    shots: list[Shot],
+    strokes_gained: Mapping[int, float | None] | None = None,
+) -> HoleResult:
     """`shots`: every recorded `Shot` row for this hole, in stroke order.
-    Requires `Shot.strokes_gained` to already be populated (see
-    `app.services.strokes_gained`) — blown-recovery detection reads it."""
+
+    Blown-recovery detection needs each shot's Strokes Gained. Pass
+    `strokes_gained` (shot id -> SG) to supply freshly-computed values;
+    omit it to read the persisted `Shot.strokes_gained` column. The
+    parameter exists because `GET /rounds/{id}/analytics` computes SG for
+    its own response anyway, and used to *write* those values back to the
+    database purely so this function could read them off the ORM objects —
+    a GET that mutated every shot in the round on every dashboard load.
+    """
     score = len(shots)
     putts = sum(1 for s in shots if s.club == "Putter")
+
+    def _sg(shot: Shot) -> float | None:
+        if strokes_gained is None:
+            return shot.strokes_gained
+        return strokes_gained.get(shot.id)
+
     blown_recoveries = sum(
         1
         for s in shots
         if s.start_lie not in _NON_RECOVERY_LIES
         and s.start_distance_yards <= BLOWN_RECOVERY_THRESHOLD_YARDS
-        and s.strokes_gained is not None
-        and s.strokes_gained < 0
+        and _sg(s) is not None
+        and _sg(s) < 0
     )
     # Count the penalty-stroke marker row itself (start_lie == end_lie ==
     # penalty — see app/db/seed.py hole 14 for the pattern), not every row
@@ -95,9 +114,15 @@ def evaluate_hole(hole_number: int, par: int, shots: list[Shot]) -> HoleResult:
     )
 
 
-def evaluate_round(holes: list[tuple[int, int, list[Shot]]]) -> TigerFiveSummary:
-    """`holes`: one `(hole_number, par, shots_for_that_hole)` per hole."""
-    results = [evaluate_hole(number, par, shots) for number, par, shots in holes]
+def evaluate_round(
+    holes: list[tuple[int, int, list[Shot]]],
+    strokes_gained: Mapping[int, float | None] | None = None,
+) -> TigerFiveSummary:
+    """`holes`: one `(hole_number, par, shots_for_that_hole)` per hole.
+    `strokes_gained`: see `evaluate_hole`."""
+    results = [
+        evaluate_hole(number, par, shots, strokes_gained) for number, par, shots in holes
+    ]
     total_holes = len(results)
     clean_holes = sum(1 for h in results if h.is_clean)
     cci = round(100 * clean_holes / total_holes, 1) if total_holes else 0.0

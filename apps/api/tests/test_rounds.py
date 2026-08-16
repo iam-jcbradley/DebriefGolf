@@ -171,6 +171,36 @@ class TestCreateShotsBulk:
         shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
         assert len(shots) == 2
 
+    def test_persists_strokes_gained_when_shots_are_recorded(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        """Stored SG is written here rather than on every analytics read.
+        `GET /practice/combines`, the export and the hole replay all read the
+        column, so it has to be populated at write time."""
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+
+        auth_client.post(
+            f"/api/rounds/{round_id}/shots/bulk",
+            json={
+                "shots": [
+                    {
+                        "hole_number": 1,
+                        "shot_number": 1,
+                        "club": "Driver",
+                        "start_lie": "tee",
+                        "end_lie": "fairway",
+                        "start_distance_yards": 400,
+                        "end_distance_yards": 150,
+                    }
+                ]
+            },
+        )
+
+        db_session.expire_all()
+        stored = db_session.exec(select(Shot).where(Shot.round_id == round_id)).all()
+        assert stored
+        assert all(s.strokes_gained is not None for s in stored)
+
     def test_404_for_unknown_round(self, auth_client: TestClient) -> None:
         response = auth_client.post("/api/rounds/999999/shots/bulk", json={"shots": []})
         assert response.status_code == 404

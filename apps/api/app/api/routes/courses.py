@@ -111,11 +111,33 @@ def _serialize_course(session: Session, course: Course) -> dict:
 # `POST /courses` writes data every user's rounds can reference, and the
 # search endpoints proxy OpenStreetMap's public Overpass API; neither is
 # something to leave open to anonymous callers.
+DEFAULT_COURSE_LIMIT = 100
+MAX_COURSE_LIMIT = 500
+
+
 @router.get("/courses")
-def list_courses(user: CurrentUser, session: SessionDep) -> list[dict]:
+def list_courses(
+    user: CurrentUser,
+    session: SessionDep,
+    q: str = "",
+    limit: int = DEFAULT_COURSE_LIMIT,
+    offset: int = 0,
+) -> list[dict]:
     """Course picker list (name/city/state only — fetch /courses/{id} for
-    hole geometry)."""
-    courses = session.exec(select(Course).order_by(Course.name)).all()
+    hole geometry). Paginated, with an optional name filter: courses are
+    shared across every user, so this table is the one that grows without
+    any single player doing anything."""
+    if limit < 1 or limit > MAX_COURSE_LIMIT:
+        raise HTTPException(
+            status_code=422, detail=f"limit must be between 1 and {MAX_COURSE_LIMIT}"
+        )
+    if offset < 0:
+        raise HTTPException(status_code=422, detail="offset must not be negative")
+
+    query = select(Course)
+    if q.strip():
+        query = query.where(func.lower(Course.name).contains(q.strip().lower()))
+    courses = session.exec(query.order_by(Course.name).limit(limit).offset(offset)).all()
     return [{"id": c.id, "name": c.name, "city": c.city, "state": c.state} for c in courses]
 
 

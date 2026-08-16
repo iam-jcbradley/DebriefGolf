@@ -21,7 +21,7 @@ class GarminConnection(SQLModel, table=True):
     __tablename__ = "garmin_connection"
 
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id", unique=True, index=True)
+    user_id: int = Field(foreign_key="user.id", unique=True, index=True, ondelete="CASCADE")
     access_token_encrypted: str = ""
     refresh_token_encrypted: str = ""
     token_type: str = "Bearer"

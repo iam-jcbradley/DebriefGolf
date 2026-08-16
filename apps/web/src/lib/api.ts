@@ -298,9 +298,19 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-/** The signed-in player's rounds, most recent first. */
-export function getRounds(): Promise<RoundSummary[]> {
-  return apiFetch<RoundSummary[]>("/api/rounds");
+export interface RoundListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/** The signed-in player's rounds, most recent first. Paginated server-side
+ * — pass `{ limit: 1 }` when all you want is the latest one. */
+export function getRounds(options: RoundListOptions = {}): Promise<RoundSummary[]> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  return apiFetch<RoundSummary[]>(`/api/rounds${query ? `?${query}` : ""}`);
 }
 
 export function getRoundAnalytics(roundId: number): Promise<RoundAnalyticsResponse> {

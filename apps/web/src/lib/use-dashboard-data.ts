@@ -15,12 +15,6 @@ export interface UseDashboardData {
   refresh: () => void;
 }
 
-function mostRecent(rounds: RoundSummary[]): RoundSummary {
-  return [...rounds].sort(
-    (a, b) => new Date(b.played_at).getTime() - new Date(a.played_at).getTime()
-  )[0];
-}
-
 /** `signedIn`: whether there's a session to fetch for. The API scopes
  * rounds to the session user, so there is no id to pass — and no way for
  * the dashboard to ask for anyone else's round even by accident. */
@@ -38,12 +32,15 @@ export function useDashboardData(signedIn: boolean): UseDashboardData {
     async function load() {
       setState({ status: "loading" });
       try {
-        const rounds = await getRounds();
+        // Ask for one round rather than fetching every round the player has
+        // ever played and sorting client-side: the API returns them newest
+        // first, so the newest is the only one this page needs.
+        const rounds = await getRounds({ limit: 1 });
         if (rounds.length === 0) {
           if (!cancelled) setState({ status: "empty" });
           return;
         }
-        const round = mostRecent(rounds);
+        const round = rounds[0];
         const analytics = await getRoundAnalytics(round.id);
         if (!cancelled) setState({ status: "ready", round, analytics });
       } catch (error) {

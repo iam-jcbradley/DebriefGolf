@@ -315,37 +315,89 @@ rewritten for sessions), eslint and `tsc --noEmit` clean, production build
 succeeds with `/login` at ~123kB First Load JS. `make seed` prints the demo
 account's credentials, and an unauthenticated `curl /api/rounds` answers 401.
 
-## Phase 11 — Performance & Scale
+## Phase 11 — Performance & Scale (done, with noted gaps)
 
-Goal: the query patterns are all correct and all shaped for a demo dataset.
-Fix them before there's production data to migrate around.
+Goal: the query patterns were all correct and all shaped for a demo database
+holding one round. Fix them before there's production data to migrate around.
 
-- [ ] Index the columns every query filters on: `round.user_id`,
-  `shot.round_id`, `shot.hole_id`, `hole.course_id`. The initial migration
-  created these FKs without indexes; later migrations did index
-  `practice_session.user_id` and `practice_shot.session_id`, so this is an
-  oversight in the original tables, not a policy.
-- [ ] Replace the two-step `SELECT round.id WHERE user_id` → `WHERE round_id IN
-  (...)` pattern with joins (`bag.py`, `practice.py` ×2, `privacy.py`). Two
-  round trips and an unbounded `IN` list per request today.
-- [ ] `GET /rounds/{id}/analytics` recomputes strokes gained and writes it back
-  to every shot on every call — a non-idempotent GET on the dashboard's hot
-  path. Compute on shot submission or cache; let the GET read.
-- [ ] `list_round_holes` loads every shot in a round to produce per-hole counts;
-  make it a `GROUP BY`.
-- [ ] Paginate `GET /rounds` and `GET /courses`, and let the dashboard ask for
-  the most recent round via `ORDER BY played_at DESC LIMIT 1` instead of sorting
-  the full list client-side.
-- [ ] Cap upload size on `POST /rounds/upload` and
-  `POST /practice/sessions/upload` — both `await file.read()` the whole body
-  into memory with no limit, no content-type check, and no rate limit.
-- [ ] FK `ondelete="CASCADE"` so `privacy.py`'s deletion stops loading every
-  child row into Python to delete it one at a time.
+Measured with `apps/api/scripts/benchmark.py`, which seeds 300 rounds and
+21,600 shots per user (two users, so an endpoint that stopped scoping to the
+caller shows up as both wrong and slow) and times the endpoints the dashboard,
+Smart Bag and Practice Hub actually call. Median ms, same machine, before → after:
 
-**Acceptance criteria:** a seeded benchmark (hundreds of rounds, tens of
-thousands of shots) where the dashboard and Smart Bag endpoints stay flat rather
-than degrading linearly; an oversized upload rejected with a 413 instead of
-growing the container's RSS.
+| endpoint | before | after | |
+|---|---|---|---|
+| `GET /rounds` | 5.3 | 3.6 | |
+| `GET /rounds?limit=1` | — | 2.7 | what the dashboard now asks for |
+| `GET /rounds/{id}/analytics` | 64.4 | 5.7 | **11x** |
+| `GET /rounds/{id}/holes` | 7.4 | 4.1 | |
+| `GET /bag` | 525.2 | 195.7 | **2.7x** |
+| `GET /practice/delivery` | 500.6 | 200.8 | **2.5x** |
+| `GET /practice/combines` | 543.7 | 245.7 | **2.2x** |
+| `GET /me/export` | 366.9 | 341.3 | unchanged by design — it returns everything |
+
+- [x] **Indexes** on `round.user_id`, `shot.round_id`, `shot.hole_id`,
+  `hole.course_id`. The initial migration created these foreign keys without
+  them; later migrations *did* index `practice_session.user_id` and
+  `practice_shot.session_id`, so it was an oversight rather than a policy.
+- [x] **`ON DELETE CASCADE`** on the ownership foreign keys, and
+  `DELETE /api/me` reduced from a row-by-row ORM walk over every shot, round,
+  practice shot, session and virtual round to a single `session.delete(user)`.
+  Deliberately not applied to `shot.hole_id`, `hole.course_id` or
+  `round.course_id`: courses and holes are shared reference geometry, and
+  DATA_PRIVACY.md is explicit that deleting one user must not delete them.
+- [x] **Joins** replacing the "select this user's round ids, then select shots
+  where `round_id IN (...)`" pattern in `bag.py`, `practice.py` (×2) and
+  `privacy.py` — two round trips and an IN list that grew with every round the
+  user ever played.
+- [x] **The analytics GET no longer writes.** It used to recompute Strokes
+  Gained and write it back to every shot in the round on every call — a
+  non-idempotent GET taking a write lock on the dashboard's hot path. The
+  cause was hidden coupling: `tiger_five` read `Shot.strokes_gained` off the
+  ORM objects, so the endpoint had to mutate them first. `evaluate_hole`/
+  `evaluate_round` now accept the values explicitly, stored SG is written when
+  shots are recorded, and `PATCH /api/auth/me` recomputes it when the handicap
+  index (which sets the SG benchmark bucket) changes.
+- [x] **Raw columns instead of ORM objects** for the three endpoints that walk
+  every shot a player has ever recorded. Profiling showed the cost wasn't the
+  PostGIS geometry (deferring it saved 8%) but ORM instantiation: 338ms for
+  21,600 `Shot` objects vs 69ms for the five columns actually read.
+  `app/services/shot_view.py` makes that contract explicit. This was the single
+  biggest win on `/bag` and both practice endpoints — the indexes did nothing
+  for them, because they read all of the user's rows regardless.
+- [x] **`GROUP BY`** for per-hole shot counts, which loaded every shot in a
+  round to count them in Python.
+- [x] **Pagination** on `GET /rounds` and `GET /courses` (with a name filter),
+  and the dashboard now asks for `?limit=1` instead of fetching every round and
+  sorting client-side to pick the newest.
+- [x] **Upload limits**, in two layers: an ASGI middleware that refuses an
+  oversized `Content-Length` before routing or body parsing, and a chunked read
+  capped at 10 MiB inside the handler for requests that declare no length. The
+  middleware matters because by the time a handler runs, FastAPI has already
+  parsed and spooled the multipart body — a check inside the handler bounds
+  memory but not the parse.
+
+**Gaps carried forward:**
+- **The aggregate endpoints are now bound by Python-side aggregation** over all
+  of a user's shots (~200ms at 21,600). Going further means aggregating in the
+  database or keeping a per-club summary table — a bigger change that would move
+  the IQR outlier rejection into SQL, and not worth it until someone has that
+  much data.
+- **Nothing is cached.** Every dashboard load recomputes the same round's
+  analytics from scratch. Cheap now that the GET is read-only and idempotent,
+  which is precisely what makes caching possible later.
+- **`GET /me/export` is unchanged and unbounded** — it returns every row the
+  user owns, by definition. Fine for a deliberate, rare export; it would want
+  streaming or a background job if accounts get much larger.
+- **No rate limiting** on uploads or login (carried from Phase 10). Size limits
+  bound one request, not a thousand of them.
+
+**Acceptance criteria:** 335 backend tests (5 new: `test_upload_limits.py`,
+plus a test that the analytics GET writes nothing and one that shots get SG
+when recorded), ruff clean. 301 frontend tests, eslint/tsc/build clean. The
+migration was verified up, down and up again against a real PostGIS instance.
+Benchmark numbers above are reproducible with
+`uv run python scripts/benchmark.py`.
 
 ## Phase 12 — Observability & Operational Readiness
 

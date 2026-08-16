@@ -18,7 +18,7 @@ class Course(SQLModel, table=True):
 
 class Hole(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    course_id: int = Field(foreign_key="course.id")
+    course_id: int = Field(foreign_key="course.id", index=True)
     number: int
     par: int
     yardage: int
