@@ -653,7 +653,17 @@ jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
   `test_resubmitting_the_same_shot_does_not_duplicate_it`,
   `test_duplicate_shot_within_one_payload_does_not_duplicate_it`,
   `test_a_second_hole_can_still_be_added_after_the_first`.
-- No merge/rename flow for near-duplicate players (carried from Phase 8).
+- **Rename, half-fixed by Phase 10 as a side effect, not by design:**
+  `PATCH /api/auth/me` already lets a signed-in player rename *themselves* —
+  covers the "typo in my own name" case this bullet originally meant.
+  **Merge does not exist and is a real product/security decision, not a
+  small follow-up**: combining two accounts' data means proving ownership
+  of *both* from one session, which is exactly the kind of cross-account
+  interaction Phase 10 was built to close off. Needs a deliberate answer to
+  "prove ownership how" (re-enter the second account's password in the same
+  flow? an emailed confirmation link, which needs mail-sending
+  infrastructure this app doesn't have yet, same gap Phase 10 already
+  flagged for password reset?) before it's worth building, not a guess.
 
 ## Cross-cutting (ongoing, not a single phase)
 
