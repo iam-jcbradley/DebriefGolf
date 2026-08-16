@@ -4,13 +4,13 @@ delta, and prescriptive practice combine recommendations.
 """
 
 from collections import defaultdict
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
 from sqlmodel import Session, select
 
-from app.db.session import get_session
-from app.models import PracticeSession, PracticeShot, Round, Shot, User
+from app.api.deps import CurrentUser, SessionDep
+from app.api.uploads import read_upload
+from app.models import PracticeSession, PracticeShot, Round, Shot
 from app.services.delivery_profile import (
     SessionShotRow,
     compute_delivery_profile,
@@ -31,6 +31,7 @@ from app.services.practice_combines import (
     recommend_combines,
 )
 from app.services.putting import evaluate_putting
+from app.services.shot_view import ShotView
 from app.services.smart_bag import CLUB_ORDER, compute_club_gapping, shot_carry_distance
 
 router = APIRouter()
@@ -40,10 +41,11 @@ IRON_CLUBS = {club for club in CLUB_ORDER if "Iron" in club}
 
 @router.post("/practice/sessions/upload", status_code=201)
 async def upload_practice_session(
-    user_id: int,
     source: str,
     file: UploadFile,
-    session: Annotated[Session, Depends(get_session)],
+    request: Request,
+    user: CurrentUser,
+    session: SessionDep,
 ) -> dict:
     """Ingest an R10/R50 export: parses it with
     `app.services.parsers.launch_monitor_parser` (CSV, or JSON when the
@@ -53,11 +55,7 @@ async def upload_practice_session(
     header-alias tolerance. Malformed rows don't abort the upload; they're
     reported back alongside the created session.
     """
-    user = session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    contents = await file.read()
+    contents = await read_upload(file, request)
     is_json = (file.filename or "").lower().endswith(".json")
     result = (
         parse_launch_monitor_json(contents) if is_json else parse_launch_monitor_csv(contents)
@@ -69,7 +67,7 @@ async def upload_practice_session(
             detail=f"No shots could be parsed from this file. Errors: {result.errors}",
         )
 
-    practice_session = PracticeSession(user_id=user_id, source=source)
+    practice_session = PracticeSession(user_id=user.id, source=source)
     session.add(practice_session)
     session.commit()
     session.refresh(practice_session)
@@ -101,11 +99,22 @@ async def upload_practice_session(
     }
 
 
-def _fetch_on_course_shots(session: Session, user_id: int) -> list[Shot]:
-    round_ids = list(session.exec(select(Round.id).where(Round.user_id == user_id)).all())
-    if not round_ids:
-        return []
-    return list(session.exec(select(Shot).where(Shot.round_id.in_(round_ids))).all())
+def _fetch_on_course_shots(session: Session, user_id: int) -> list[ShotView]:
+    """Every on-course shot this user has recorded, as raw columns rather
+    than ORM objects — see app/services/shot_view.py for why."""
+    return list(
+        session.exec(
+            select(
+                Shot.club,
+                Shot.start_distance_yards,
+                Shot.end_distance_yards,
+                Shot.end_lie,
+                Shot.strokes_gained,
+            )
+            .join(Round, Shot.round_id == Round.id)
+            .where(Round.user_id == user_id)
+        ).all()
+    )
 
 
 def _on_course_club_gapping(shots: list[Shot]) -> list:
@@ -117,14 +126,14 @@ def _on_course_club_gapping(shots: list[Shot]) -> list:
     return compute_club_gapping(distances_by_club)
 
 
-@router.get("/practice/delivery/{user_id}")
-def get_delivery_profile(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.get("/practice/delivery")
+def get_delivery_profile(user: CurrentUser, session: SessionDep) -> dict:
     """Per-club R10/R50 delivery numbers (PRD §6.1): aggregate averages,
     a per-club trend across sessions, and the Sim vs. Real-World carry
     gapping delta against this user's on-course Smart Bag numbers.
     """
     practice_sessions = list(
-        session.exec(select(PracticeSession).where(PracticeSession.user_id == user_id)).all()
+        session.exec(select(PracticeSession).where(PracticeSession.user_id == user.id)).all()
     )
     recorded_at_by_session = {s.id: s.recorded_at for s in practice_sessions}
     session_ids = list(recorded_at_by_session.keys())
@@ -132,7 +141,11 @@ def get_delivery_profile(user_id: int, session: Annotated[Session, Depends(get_s
     practice_shots: list[PracticeShot] = []
     if session_ids:
         practice_shots = list(
-            session.exec(select(PracticeShot).where(PracticeShot.session_id.in_(session_ids))).all()
+            session.exec(
+                select(PracticeShot)
+                .join(PracticeSession, PracticeShot.session_id == PracticeSession.id)
+                .where(PracticeSession.user_id == user.id)
+            ).all()
         )
 
     profile = compute_delivery_profile(practice_shots)
@@ -147,11 +160,11 @@ def get_delivery_profile(user_id: int, session: Annotated[Session, Depends(get_s
         ]
     )
 
-    on_course_stats = _on_course_club_gapping(_fetch_on_course_shots(session, user_id))
+    on_course_stats = _on_course_club_gapping(_fetch_on_course_shots(session, user.id))
     gapping = compute_gapping_delta(profile, on_course_stats)
 
     return {
-        "user_id": user_id,
+        "user_id": user.id,
         "session_count": len(practice_sessions),
         "clubs": [
             {
@@ -193,8 +206,8 @@ def get_delivery_profile(user_id: int, session: Annotated[Session, Depends(get_s
     }
 
 
-@router.get("/practice/combines/{user_id}")
-def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.get("/practice/combines")
+def get_practice_combines(user: CurrentUser, session: SessionDep) -> dict:
     """Prescriptive combine recommendations (PRD §7.1): detects the four
     PRD §7.1 weaknesses from data this user already has on file — on-course
     Strokes Gained from 100-125y, Smart Bag driver dispersion, R10/R50 iron
@@ -202,11 +215,7 @@ def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_
     weakness actually detected. A user with no weaknesses flagged (or no
     data at all yet) gets an empty list, not a default recommendation.
     """
-    user = session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    on_course_shots = _fetch_on_course_shots(session, user_id)
+    on_course_shots = _fetch_on_course_shots(session, user.id)
 
     approach_bracket_sg = [
         shot.strokes_gained
@@ -223,22 +232,15 @@ def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_
         driver_stats.lateral.stdev if driver_stats and driver_stats.lateral else None
     )
 
-    practice_session_ids = list(
-        session.exec(select(PracticeSession.id).where(PracticeSession.user_id == user_id)).all()
-    )
     smash_factor_by_iron: dict[str, list[float]] = defaultdict(list)
-    if practice_session_ids:
-        iron_shots = list(
-            session.exec(
-                select(PracticeShot).where(
-                    PracticeShot.session_id.in_(practice_session_ids),
-                    PracticeShot.club.in_(IRON_CLUBS),
-                )
-            ).all()
-        )
-        for shot in iron_shots:
-            if shot.smash_factor is not None:
-                smash_factor_by_iron[shot.club].append(shot.smash_factor)
+    iron_shots = session.exec(
+        select(PracticeShot)
+        .join(PracticeSession, PracticeShot.session_id == PracticeSession.id)
+        .where(PracticeSession.user_id == user.id, PracticeShot.club.in_(IRON_CLUBS))
+    ).all()
+    for shot in iron_shots:
+        if shot.smash_factor is not None:
+            smash_factor_by_iron[shot.club].append(shot.smash_factor)
 
     putting = evaluate_putting(on_course_shots)
 
@@ -252,7 +254,7 @@ def get_practice_combines(user_id: int, session: Annotated[Session, Depends(get_
     combines = recommend_combines(signals)
 
     return {
-        "user_id": user_id,
+        "user_id": user.id,
         "weaknesses": [
             {"weakness": s.weakness.value, "detail": s.detail} for s in signals
         ],

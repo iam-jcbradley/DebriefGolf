@@ -62,7 +62,9 @@ class TestState:
 
     def test_expired_state_is_rejected(self) -> None:
         request = build_authorize_request(user_id=42)
-        with patch("app.services.garmin_oauth.time.time", return_value=time.time() + 10_000):
+        # The clock lives in app/core/signing.py since Phase 10 — the state
+        # token's signing/expiry mechanics are shared with session cookies.
+        with patch("app.core.signing.time.time", return_value=time.time() + 10_000):
             with pytest.raises(GarminOAuthError, match="expired"):
                 decode_state(request.state)
 

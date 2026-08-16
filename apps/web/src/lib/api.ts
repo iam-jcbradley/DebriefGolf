@@ -224,7 +224,6 @@ export interface OsmCourseDraft {
 }
 
 export interface RoundCreateInput {
-  user_id: number;
   course_id: number;
   played_at?: string;
   total_score?: number | null;
@@ -288,7 +287,10 @@ function extractErrorMessage(responseText: string): string {
 }
 
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, init);
+  // `credentials: "include"` sends the session cookie. The API is on a
+  // different origin from the web app (:8000 vs :3000), so without this the
+  // browser omits it and every call 401s.
+  const response = await fetch(`${API_URL}${path}`, { credentials: "include", ...init });
   if (!response.ok) {
     const text = await response.text();
     throw new ApiError(response.status, extractErrorMessage(text) || response.statusText);
@@ -296,18 +298,27 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function getRounds(userId?: number): Promise<RoundSummary[]> {
-  return apiFetch<RoundSummary[]>(
-    userId === undefined ? "/api/rounds" : `/api/rounds?user_id=${userId}`
-  );
+export interface RoundListOptions {
+  limit?: number;
+  offset?: number;
+}
+
+/** The signed-in player's rounds, most recent first. Paginated server-side
+ * — pass `{ limit: 1 }` when all you want is the latest one. */
+export function getRounds(options: RoundListOptions = {}): Promise<RoundSummary[]> {
+  const params = new URLSearchParams();
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.offset !== undefined) params.set("offset", String(options.offset));
+  const query = params.toString();
+  return apiFetch<RoundSummary[]>(`/api/rounds${query ? `?${query}` : ""}`);
 }
 
 export function getRoundAnalytics(roundId: number): Promise<RoundAnalyticsResponse> {
   return apiFetch<RoundAnalyticsResponse>(`/api/rounds/${roundId}/analytics`);
 }
 
-export function getSmartBag(userId: number): Promise<SmartBag> {
-  return apiFetch<SmartBag>(`/api/bag/${userId}`);
+export function getSmartBag(): Promise<SmartBag> {
+  return apiFetch<SmartBag>("/api/bag");
 }
 
 export function getRoundHoles(roundId: number): Promise<HoleSummary[]> {
@@ -318,10 +329,10 @@ export function getHoleReplay(roundId: number, holeNumber: number): Promise<Hole
   return apiFetch<HoleReplay>(`/api/rounds/${roundId}/holes/${holeNumber}/replay`);
 }
 
-export function uploadFitFile(userId: number, file: File): Promise<FitUploadResult> {
+export function uploadFitFile(file: File): Promise<FitUploadResult> {
   const formData = new FormData();
   formData.append("file", file);
-  return apiFetch<FitUploadResult>(`/api/rounds/upload?user_id=${userId}`, {
+  return apiFetch<FitUploadResult>("/api/rounds/upload", {
     method: "POST",
     body: formData,
   });
@@ -383,16 +394,16 @@ export interface GarminStatus {
   connected: boolean;
 }
 
-export function startGarminAuthorize(userId: number): Promise<GarminAuthorizeResult> {
-  return apiFetch<GarminAuthorizeResult>(`/api/auth/garmin/authorize?user_id=${userId}`);
+export function startGarminAuthorize(): Promise<GarminAuthorizeResult> {
+  return apiFetch<GarminAuthorizeResult>("/api/auth/garmin/authorize");
 }
 
-export function getGarminStatus(userId: number): Promise<GarminStatus> {
-  return apiFetch<GarminStatus>(`/api/auth/garmin/${userId}/status`);
+export function getGarminStatus(): Promise<GarminStatus> {
+  return apiFetch<GarminStatus>("/api/auth/garmin/status");
 }
 
-export function disconnectGarmin(userId: number): Promise<GarminStatus> {
-  return apiFetch<GarminStatus>(`/api/auth/garmin/${userId}`, { method: "DELETE" });
+export function disconnectGarmin(): Promise<GarminStatus> {
+  return apiFetch<GarminStatus>("/api/auth/garmin", { method: "DELETE" });
 }
 
 // --- Practice Hub: R10/R50 delivery profile + combines (PRD §6.1, §7.1, §10 Phase 6) ---
@@ -433,8 +444,8 @@ export interface DeliveryProfile {
   sim_vs_real_gapping: SimVsRealGapping[];
 }
 
-export function getDeliveryProfile(userId: number): Promise<DeliveryProfile> {
-  return apiFetch<DeliveryProfile>(`/api/practice/delivery/${userId}`);
+export function getDeliveryProfile(): Promise<DeliveryProfile> {
+  return apiFetch<DeliveryProfile>("/api/practice/delivery");
 }
 
 export interface PracticeUploadResult {
@@ -444,14 +455,13 @@ export interface PracticeUploadResult {
 }
 
 export function uploadPracticeSession(
-  userId: number,
   source: string,
   file: File
 ): Promise<PracticeUploadResult> {
   const formData = new FormData();
   formData.append("file", file);
   return apiFetch<PracticeUploadResult>(
-    `/api/practice/sessions/upload?user_id=${userId}&source=${encodeURIComponent(source)}`,
+    `/api/practice/sessions/upload?source=${encodeURIComponent(source)}`,
     { method: "POST", body: formData }
   );
 }
@@ -481,8 +491,8 @@ export interface PracticeCombines {
   combines: Combine[];
 }
 
-export function getPracticeCombines(userId: number): Promise<PracticeCombines> {
-  return apiFetch<PracticeCombines>(`/api/practice/combines/${userId}`);
+export function getPracticeCombines(): Promise<PracticeCombines> {
+  return apiFetch<PracticeCombines>("/api/practice/combines");
 }
 
 // --- Virtual/Sim Round Hub (PRD §6.2, §10 Phase 6) ---
@@ -505,7 +515,6 @@ export interface VirtualRound {
 }
 
 export interface VirtualRoundCreateInput {
-  user_id: number;
   platform: SimPlatform;
   course_name: string;
   played_at?: string;
@@ -514,8 +523,8 @@ export interface VirtualRoundCreateInput {
   notes?: string | null;
 }
 
-export function getVirtualRounds(userId: number): Promise<VirtualRound[]> {
-  return apiFetch<VirtualRound[]>(`/api/virtual-rounds?user_id=${userId}`);
+export function getVirtualRounds(): Promise<VirtualRound[]> {
+  return apiFetch<VirtualRound[]>("/api/virtual-rounds");
 }
 
 export function createVirtualRound(payload: VirtualRoundCreateInput): Promise<VirtualRound> {
@@ -536,8 +545,8 @@ export interface UserDataExport {
   virtual_rounds: unknown[];
 }
 
-export function getUserDataExport(userId: number): Promise<UserDataExport> {
-  return apiFetch<UserDataExport>(`/api/users/${userId}/export`);
+export function getUserDataExport(): Promise<UserDataExport> {
+  return apiFetch<UserDataExport>("/api/me/export");
 }
 
 export interface DeleteUserResult {
@@ -545,12 +554,15 @@ export interface DeleteUserResult {
   user_id: number;
 }
 
-export function deleteUserData(userId: number): Promise<DeleteUserResult> {
-  return apiFetch<DeleteUserResult>(`/api/users/${userId}`, { method: "DELETE" });
+export function deleteUserData(): Promise<DeleteUserResult> {
+  return apiFetch<DeleteUserResult>("/api/me", { method: "DELETE" });
 }
 
-// --- User identity (name-based player picker, persisted client-side —
-// see src/lib/current-user.tsx) ---
+// --- Authentication (Phase 10) ---
+//
+// Identity comes from an HttpOnly session cookie the browser holds and this
+// module never sees. There is deliberately no way to ask for another user's
+// data: the endpoints below say "me", and the server resolves who that is.
 
 export interface UserProfile {
   id: number;
@@ -560,30 +572,53 @@ export interface UserProfile {
   created_at: string;
 }
 
-export interface UserSummary {
-  id: number;
-  name: string;
-}
-
-export interface UserCreateInput {
+export interface RegisterInput {
   name: string;
   email: string;
+  password: string;
 }
 
-export function createUser(payload: UserCreateInput): Promise<UserProfile> {
-  return apiFetch<UserProfile>("/api/users", {
+export interface LoginInput {
+  email: string;
+  password: string;
+}
+
+export function register(payload: RegisterInput): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
-export function searchUsers(query: string): Promise<UserSummary[]> {
-  return apiFetch<UserSummary[]>(`/api/users?q=${encodeURIComponent(query)}`);
+export function login(payload: LoginInput): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
-export function getUserProfile(userId: number): Promise<UserProfile> {
-  return apiFetch<UserProfile>(`/api/users/${userId}`);
+export function logout(): Promise<{ logged_out: boolean }> {
+  return apiFetch<{ logged_out: boolean }>("/api/auth/logout", { method: "POST" });
+}
+
+/** Throws `ApiError` with status 401 when nobody is signed in. */
+export function getCurrentUser(): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/me");
+}
+
+export interface ProfileUpdateInput {
+  name?: string;
+  handicap_index?: number;
+}
+
+export function updateProfile(payload: ProfileUpdateInput): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/me", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export { API_URL };

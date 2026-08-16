@@ -30,8 +30,12 @@ Then apply migrations and load a demo round to have something to look at:
 ```bash
 make migrate     # alembic upgrade head
 make seed        # one 18-hole demo round, incl. a few PRD-style diagnostic scenarios
-curl localhost:8000/api/rounds
 ```
+
+`make seed` prints the demo account's login. Sign in at
+http://localhost:3000/login with it (or create your own account) — every
+endpoint that touches player data requires a session, so `curl
+localhost:8000/api/rounds` on its own now answers `401`.
 
 ## Local development (without Docker)
 
@@ -39,7 +43,7 @@ curl localhost:8000/api/rounds
 # frontend
 cd apps/web && pnpm install && pnpm dev
 
-# backend (requires a running Postgres — e.g. `docker compose up -d db`)
+# backend (requires a running Postgres — e.g. `make db-up`)
 cd apps/api && uv sync && uv run uvicorn app.main:app --reload
 ```
 
@@ -60,6 +64,26 @@ to this app. See that directory's README before using it.
 ```bash
 make test   # pytest + vitest
 make lint   # ruff + eslint
+```
+
+`make test` starts the database itself (`make db-up`) if it isn't already
+running. The backend suite creates and migrates its own `debrief_golf_test`
+database and wraps every test in a transaction it rolls back, so it never
+reads or writes your development data — `make seed`'s demo round can't break
+a test, and a test run can't leave rows behind. Point it somewhere else with
+`TEST_DATABASE_URL` if you'd rather not use Docker for it.
+
+The pure-logic suites need no database at all:
+
+```bash
+cd apps/api && uv run pytest tests/parsers tests/test_strokes_gained.py
+```
+
+`tools/garmin_import` is a standalone pip project with its own tests, run in
+CI and locally with:
+
+```bash
+cd tools/garmin_import && pip install -r requirements-dev.txt && pytest
 ```
 
 ## Docs

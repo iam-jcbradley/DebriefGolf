@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { ApiError, createRound, getCourses, type CourseListItem } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
 
@@ -47,7 +47,6 @@ function NewRoundForm() {
     setError(null);
     try {
       const round = await createRound({
-        user_id: user.id,
         course_id: course,
         played_at: playedAt ? new Date(playedAt).toISOString() : undefined,
       });
@@ -64,7 +63,7 @@ function NewRoundForm() {
       <main className="mx-auto max-w-md px-6 py-10">
         <h1 className="text-2xl font-semibold tracking-tight">New round</h1>
         <div className="mt-6">
-          <NoPlayerSelected description="Choose a player before entering a round." />
+          <SignedOut description="Sign in before entering a round." />
         </div>
       </main>
     );

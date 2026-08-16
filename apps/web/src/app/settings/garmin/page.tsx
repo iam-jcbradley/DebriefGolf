@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,14 +36,14 @@ function CallbackBanner() {
   return null;
 }
 
-function GarminConnectPanel({ userId, playerName }: { userId: number; playerName: string }) {
+function GarminConnectPanel({ playerName }: { playerName: string }) {
   const [status, setStatus] = useState<"unknown" | "connected" | "not_connected">("unknown");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
-    getGarminStatus(userId)
+    getGarminStatus()
       .then((result) => {
         if (!cancelled) setStatus(result.connected ? "connected" : "not_connected");
       })
@@ -53,13 +53,13 @@ function GarminConnectPanel({ userId, playerName }: { userId: number; playerName
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, []);
 
   async function handleConnect() {
     setBusy(true);
     setMessage(null);
     try {
-      const { authorize_url } = await startGarminAuthorize(userId);
+      const { authorize_url } = await startGarminAuthorize();
       window.location.href = authorize_url;
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not start the Garmin connection.");
@@ -71,7 +71,7 @@ function GarminConnectPanel({ userId, playerName }: { userId: number; playerName
     setBusy(true);
     setMessage(null);
     try {
-      await disconnectGarmin(userId);
+      await disconnectGarmin();
       setStatus("not_connected");
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not disconnect Garmin.");
@@ -127,9 +127,9 @@ export default function GarminSettingsPage() {
           <CallbackBanner />
         </Suspense>
         {user ? (
-          <GarminConnectPanel userId={user.id} playerName={user.name} />
+          <GarminConnectPanel playerName={user.name} />
         ) : (
-          <NoPlayerSelected description="Choose a player to manage their Garmin connection." />
+          <SignedOut description="Sign in to manage your Garmin connection." />
         )}
       </main>
     </div>

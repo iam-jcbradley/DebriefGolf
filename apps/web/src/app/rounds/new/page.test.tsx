@@ -31,7 +31,7 @@ const mockGetCourses = vi.mocked(getCourses);
 const mockCreateRound = vi.mocked(createRound);
 const mockUseCurrentUser = vi.mocked(useCurrentUser);
 
-const testUser = { id: 9, name: "Jane Doe" };
+const testUser = { id: 9, name: "Jane Doe", email: "player@example.com", handicap_index: 0, created_at: "2026-01-01T00:00:00Z" };
 
 const courses: CourseListItem[] = [
   { id: 1, name: "Pinehurst Creek Golf Club", city: "Pawleys Island", state: "SC" },
@@ -51,27 +51,33 @@ beforeEach(() => {
   mockUseCurrentUser.mockReturnValue({
     user: testUser,
     loading: false,
-    openPicker: vi.fn(),
-    clearUser: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signOut: vi.fn(),
+    refresh: vi.fn(),
   });
 });
 
 describe("NewRoundPage", () => {
-  it("shows the no-player empty state when no player is chosen", () => {
+  it("shows the signed-out empty state when nobody is signed in", () => {
     mockUseCurrentUser.mockReturnValue({
       user: null,
       loading: false,
-      openPicker: vi.fn(),
-      clearUser: vi.fn(),
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      refresh: vi.fn(),
     });
     render(<NewRoundPage />);
-    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to continue")).toBeInTheDocument();
   });
 
   it("renders the form with courses loaded", async () => {
     render(<NewRoundPage />);
     expect(await screen.findByText("Pinehurst Creek Golf Club — Pawleys Island")).toBeInTheDocument();
-    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    // The NavBar renders the signed-in name too, so scope this to the
+    // panel's own emphasis element.
+    expect(screen.getByText("Jane Doe", { selector: "strong" })).toBeInTheDocument();
   });
 
   it("prefills the course from a course_id query param", async () => {
@@ -94,7 +100,7 @@ describe("NewRoundPage", () => {
     expect(mockCreateRound).not.toHaveBeenCalled();
   });
 
-  it("creates a round for the current player and redirects to the shot-entry page", async () => {
+  it("creates a round and redirects to the shot-entry page", async () => {
     mockCreateRound.mockResolvedValue({
       id: 55, user_id: 9, course_id: 1, played_at: "2026-08-15", total_score: null,
       status: "needs_audit",
@@ -106,8 +112,9 @@ describe("NewRoundPage", () => {
     await user.selectOptions(screen.getByLabelText("Course"), "1");
     await user.click(screen.getByRole("button", { name: "Create round" }));
 
+    // No user_id: the round is attributed to the session user server-side.
     expect(mockCreateRound).toHaveBeenCalledWith(
-      expect.objectContaining({ user_id: 9, course_id: 1 })
+      expect.objectContaining({ course_id: 1 })
     );
     expect(mockPush).toHaveBeenCalledWith("/rounds/55/enter");
   });

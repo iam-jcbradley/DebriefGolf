@@ -14,14 +14,15 @@ long putts, and start-line conversion (make rate) on short putts.
 import statistics
 from dataclasses import dataclass
 
-from app.models.shot import Lie, Shot
+from app.models.shot import Lie
+from app.services.shot_view import ShotView
 
 LAG_PUTT_THRESHOLD_YARDS = 20 / 3
 SHORT_PUTT_THRESHOLD_YARDS = 6 / 3
 LAG_PROXIMITY_GOOD_YARDS = 3 / 3
 
 
-def is_putt(shot: Shot) -> bool:
+def is_putt(shot: ShotView) -> bool:
     return shot.club == "Putter"
 
 
@@ -36,7 +37,7 @@ class PuttingMechanics:
     start_line_conversion_pct: float | None
 
 
-def evaluate_putting(shots: list[Shot]) -> PuttingMechanics:
+def evaluate_putting(shots: list[ShotView]) -> PuttingMechanics:
     putts = [s for s in shots if is_putt(s)]
     lag_putts = [p for p in putts if p.start_distance_yards > LAG_PUTT_THRESHOLD_YARDS]
     short_putts = [p for p in putts if p.start_distance_yards < SHORT_PUTT_THRESHOLD_YARDS]

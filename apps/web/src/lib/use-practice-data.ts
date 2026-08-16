@@ -21,14 +21,14 @@ export interface UsePracticeData {
 }
 
 /** Loads the Practice Hub's two data sources — delivery profile (PRD §6.1)
- * and prescriptive combines (PRD §7.1) — together, since both key off the
- * same `userId` and the page renders them side by side. */
-export function usePracticeData(userId: number | null): UsePracticeData {
+ * and prescriptive combines (PRD §7.1) — together, since both are scoped to
+ * the session user and the page renders them side by side. */
+export function usePracticeData(signedIn: boolean): UsePracticeData {
   const [state, setState] = useState<PracticeDataState>({ status: "idle" });
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (userId === null) {
+    if (!signedIn) {
       setState({ status: "idle" });
       return;
     }
@@ -38,8 +38,8 @@ export function usePracticeData(userId: number | null): UsePracticeData {
       setState({ status: "loading" });
       try {
         const [delivery, combines] = await Promise.all([
-          getDeliveryProfile(userId as number),
-          getPracticeCombines(userId as number),
+          getDeliveryProfile(),
+          getPracticeCombines(),
         ]);
         if (!cancelled) setState({ status: "ready", delivery, combines });
       } catch (error) {
@@ -56,7 +56,7 @@ export function usePracticeData(userId: number | null): UsePracticeData {
     return () => {
       cancelled = true;
     };
-  }, [userId, refreshKey]);
+  }, [signedIn, refreshKey]);
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 

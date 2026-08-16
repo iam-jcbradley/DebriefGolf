@@ -20,17 +20,17 @@ beforeEach(() => {
 });
 
 describe("PracticeUpload", () => {
-  it("uploads the chosen file with the selected source for the given user", async () => {
+  it("uploads the chosen file with the selected source", async () => {
     mockUpload.mockResolvedValue({ session_id: 3, shot_count: 3, errors: [] });
     const onUploaded = vi.fn();
     const user = userEvent.setup();
 
-    render(<PracticeUpload userId={7} onUploaded={onUploaded} />);
+    render(<PracticeUpload onUploaded={onUploaded} />);
     const input = screen.getByLabelText(/upload r10\/r50 session export/i);
     await user.upload(input, makeFile());
 
     expect(await screen.findByRole("status")).toHaveTextContent("3");
-    expect(mockUpload).toHaveBeenCalledWith(7, "R10", expect.any(File));
+    expect(mockUpload).toHaveBeenCalledWith("R10", expect.any(File));
     expect(onUploaded).toHaveBeenCalledWith({ session_id: 3, shot_count: 3, errors: [] });
   });
 
@@ -38,30 +38,20 @@ describe("PracticeUpload", () => {
     mockUpload.mockResolvedValue({ session_id: 4, shot_count: 1, errors: [] });
     const user = userEvent.setup();
 
-    render(<PracticeUpload userId={7} />);
+    render(<PracticeUpload />);
     await user.selectOptions(screen.getByLabelText(/device/i), "R50");
     const input = screen.getByLabelText(/upload r10\/r50 session export/i);
     await user.upload(input, makeFile());
 
-    expect(mockUpload).toHaveBeenCalledWith(7, "R50", expect.any(File));
+    expect(mockUpload).toHaveBeenCalledWith("R50", expect.any(File));
   });
 
-  it("shows an error and does not call the API when no user id is set", async () => {
-    const user = userEvent.setup();
-    render(<PracticeUpload userId={null} />);
-    const input = screen.getByLabelText(/upload r10\/r50 session export/i);
-
-    await user.upload(input, makeFile());
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/user id/i);
-    expect(mockUpload).not.toHaveBeenCalled();
-  });
 
   it("shows the API error message when the upload fails", async () => {
     mockUpload.mockRejectedValue(new ApiError(422, "No shots could be parsed"));
     const user = userEvent.setup();
 
-    render(<PracticeUpload userId={7} />);
+    render(<PracticeUpload />);
     const input = screen.getByLabelText(/upload r10\/r50 session export/i);
     await user.upload(input, makeFile());
 
@@ -76,7 +66,7 @@ describe("PracticeUpload", () => {
     });
     const user = userEvent.setup();
 
-    render(<PracticeUpload userId={7} />);
+    render(<PracticeUpload />);
     const input = screen.getByLabelText(/upload r10\/r50 session export/i);
     await user.upload(input, makeFile());
 

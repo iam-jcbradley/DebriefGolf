@@ -4,7 +4,7 @@ import Link from "next/link";
 import { CoachBriefButton } from "@/components/coach-brief/coach-brief-button";
 import { FitUpload } from "@/components/fit-upload";
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { RoundSnapshot } from "@/components/round-snapshot";
 import { TigerFiveMeter } from "@/components/tiger-five-meter";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,7 +16,7 @@ import { useDashboardData } from "@/lib/use-dashboard-data";
 
 export default function DashboardPage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = useDashboardData(user?.id ?? null);
+  const { state, refresh } = useDashboardData(user !== null);
 
   return (
     <div className="min-h-screen">
@@ -29,7 +29,7 @@ export default function DashboardPage() {
 
         {!user ? (
           <div className="mt-8">
-            <NoPlayerSelected description="Pick or create a player to log and view rounds." />
+            <SignedOut description="Sign in to log and view your rounds." />
           </div>
         ) : (
           <>
@@ -43,7 +43,7 @@ export default function DashboardPage() {
                   Uploading for <strong className="text-foreground">{user.name}</strong>.
                 </p>
                 <div className="mt-4">
-                  <FitUpload userId={user.id} onUploaded={refresh} />
+                  <FitUpload onUploaded={refresh} />
                 </div>
                 <p className="mt-3 text-sm text-muted-foreground">
                   No `.FIT` file handy?{" "}

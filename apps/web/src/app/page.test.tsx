@@ -22,7 +22,7 @@ const mockGetRounds = vi.mocked(getRounds);
 const mockGetRoundAnalytics = vi.mocked(getRoundAnalytics);
 const mockUseCurrentUser = vi.mocked(useCurrentUser);
 
-const testUser = { id: 7, name: "Jane Doe" };
+const testUser = { id: 7, name: "Jane Doe", email: "player@example.com", handicap_index: 0, created_at: "2026-01-01T00:00:00Z" };
 
 const olderRound: RoundSummary = {
   id: 1, played_at: "2026-08-01T00:00:00Z", total_score: 90,
@@ -54,21 +54,25 @@ beforeEach(() => {
   mockUseCurrentUser.mockReturnValue({
     user: testUser,
     loading: false,
-    openPicker: vi.fn(),
-    clearUser: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signOut: vi.fn(),
+    refresh: vi.fn(),
   });
 });
 
 describe("DashboardPage", () => {
-  it("shows the no-player empty state when no player is chosen", () => {
+  it("shows the signed-out empty state when nobody is signed in", () => {
     mockUseCurrentUser.mockReturnValue({
       user: null,
       loading: false,
-      openPicker: vi.fn(),
-      clearUser: vi.fn(),
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      refresh: vi.fn(),
     });
     render(<DashboardPage />);
-    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to continue")).toBeInTheDocument();
     expect(mockGetRounds).not.toHaveBeenCalled();
   });
 
@@ -84,24 +88,29 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("No rounds logged yet.")).toBeInTheDocument();
   });
 
-  it("fetches rounds scoped to the current player", async () => {
+  it("fetches the signed-in player's rounds", async () => {
     mockGetRounds.mockResolvedValue([recentRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
     render(<DashboardPage />);
 
     await screen.findByText("Round Snapshot");
-    expect(mockGetRounds).toHaveBeenCalledWith(7);
+    // Only the latest round is fetched — not every round ever played.
+    expect(mockGetRounds).toHaveBeenCalledWith({ limit: 1 });
   });
 
-  it("fetches analytics for the most recently played round, not the first in the list", async () => {
-    mockGetRounds.mockResolvedValue([olderRound, recentRound]);
+  it("fetches analytics for the round the API returns first", async () => {
+    // Ordering is the server's job now (`ORDER BY played_at DESC LIMIT 1`),
+    // not a client-side sort over the full list — see the backend's
+    // test_list_rounds_returns_only_the_callers_rounds for that guarantee.
+    mockGetRounds.mockResolvedValue([recentRound, olderRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
     render(<DashboardPage />);
 
     await screen.findByText("Round Snapshot");
     expect(mockGetRoundAnalytics).toHaveBeenCalledWith(recentRound.id);
+    expect(mockGetRoundAnalytics).not.toHaveBeenCalledWith(olderRound.id);
   });
 
   it("shows an audit-needed message when the round has no shots yet", async () => {

@@ -15,23 +15,15 @@ export interface UseDashboardData {
   refresh: () => void;
 }
 
-function mostRecent(rounds: RoundSummary[]): RoundSummary {
-  return [...rounds].sort(
-    (a, b) => new Date(b.played_at).getTime() - new Date(a.played_at).getTime()
-  )[0];
-}
-
-/** `userId`: the current player (`useCurrentUser`). Rounds are always
- * fetched scoped to them — an unfiltered list would show whichever
- * player's round happens to be most recent globally, which stopped making
- * sense the moment player identity became a real, persisted thing rather
- * than "whoever last typed a number in". */
-export function useDashboardData(userId: number | null): UseDashboardData {
+/** `signedIn`: whether there's a session to fetch for. The API scopes
+ * rounds to the session user, so there is no id to pass — and no way for
+ * the dashboard to ask for anyone else's round even by accident. */
+export function useDashboardData(signedIn: boolean): UseDashboardData {
   const [state, setState] = useState<DashboardState>({ status: "idle" });
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (userId === null) {
+    if (!signedIn) {
       setState({ status: "idle" });
       return;
     }
@@ -40,12 +32,15 @@ export function useDashboardData(userId: number | null): UseDashboardData {
     async function load() {
       setState({ status: "loading" });
       try {
-        const rounds = await getRounds(userId as number);
+        // Ask for one round rather than fetching every round the player has
+        // ever played and sorting client-side: the API returns them newest
+        // first, so the newest is the only one this page needs.
+        const rounds = await getRounds({ limit: 1 });
         if (rounds.length === 0) {
           if (!cancelled) setState({ status: "empty" });
           return;
         }
-        const round = mostRecent(rounds);
+        const round = rounds[0];
         const analytics = await getRoundAnalytics(round.id);
         if (!cancelled) setState({ status: "ready", round, analytics });
       } catch (error) {
@@ -62,7 +57,7 @@ export function useDashboardData(userId: number | null): UseDashboardData {
     return () => {
       cancelled = true;
     };
-  }, [userId, refreshKey]);
+  }, [signedIn, refreshKey]);
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 

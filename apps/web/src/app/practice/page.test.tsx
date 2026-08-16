@@ -15,7 +15,7 @@ vi.mock("@/lib/use-practice-data", () => ({
 const mockUseCurrentUser = vi.mocked(useCurrentUser);
 const mockUsePracticeData = vi.mocked(usePracticeData);
 
-const testUser = { id: 7, name: "Jane Doe" };
+const testUser = { id: 7, name: "Jane Doe", email: "player@example.com", handicap_index: 0, created_at: "2026-01-01T00:00:00Z" };
 const mockRefresh = vi.fn();
 
 beforeEach(() => {
@@ -23,27 +23,33 @@ beforeEach(() => {
   mockUseCurrentUser.mockReturnValue({
     user: testUser,
     loading: false,
-    openPicker: vi.fn(),
-    clearUser: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signOut: vi.fn(),
+    refresh: vi.fn(),
   });
   mockUsePracticeData.mockReturnValue({ state: { status: "idle" }, refresh: mockRefresh });
 });
 
 describe("PracticePage", () => {
-  it("shows the no-player empty state when no player is chosen", () => {
+  it("shows the signed-out empty state when nobody is signed in", () => {
     mockUseCurrentUser.mockReturnValue({
       user: null,
       loading: false,
-      openPicker: vi.fn(),
-      clearUser: vi.fn(),
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      refresh: vi.fn(),
     });
     render(<PracticePage />);
-    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to continue")).toBeInTheDocument();
   });
 
   it("shows the upload panel scoped to the current player", () => {
     render(<PracticePage />);
-    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
+    // The NavBar renders the signed-in name too, so scope this to the
+    // panel's own emphasis element.
+    expect(screen.getByText("Jane Doe", { selector: "strong" })).toBeInTheDocument();
   });
 
   it("shows a loading state", () => {

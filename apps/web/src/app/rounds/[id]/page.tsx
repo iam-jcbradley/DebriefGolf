@@ -10,7 +10,6 @@ import {
   ApiError,
   getHoleReplay,
   getRoundHoles,
-  getRounds,
   getSmartBag,
   type DispersionEllipse,
   type HoleReplay,
@@ -61,10 +60,10 @@ export default function RoundDetailPage() {
 
         const approachShot = pickApproachShot(result.shots);
         if (!approachShot?.club) return;
-        const rounds = await getRounds();
-        const round = rounds.find((r) => r.id === roundId);
-        if (!round || cancelled) return;
-        const bag = await getSmartBag(round.user_id);
+        // The bag is the session user's own; the round is theirs too or
+        // this page would have 404ed before reaching here.
+        const bag = await getSmartBag();
+        if (cancelled) return;
         const clubStats = bag.clubs.find((c) => c.club === approachShot.club);
         if (cancelled) return;
         setEllipse(clubStats?.dispersion_ellipse ?? null);

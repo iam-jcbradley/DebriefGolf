@@ -14,7 +14,6 @@ type UploadState =
 const SOURCES = ["R10", "R50"] as const;
 
 export interface PracticeUploadProps {
-  userId: number | null;
   onUploaded?: (result: PracticeUploadResult) => void;
 }
 
@@ -22,19 +21,15 @@ export interface PracticeUploadProps {
  * `app.services.parsers.launch_monitor_parser`. Per-row parse errors are
  * reported alongside a successful upload rather than blocking it, matching
  * the parser's own tolerance for a partially-malformed file. */
-export function PracticeUpload({ userId, onUploaded }: PracticeUploadProps) {
+export function PracticeUpload({ onUploaded }: PracticeUploadProps) {
   const [source, setSource] = useState<(typeof SOURCES)[number]>("R10");
   const [state, setState] = useState<UploadState>({ status: "idle" });
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
-    if (userId === null) {
-      setState({ status: "error", message: "Enter a user ID before uploading." });
-      return;
-    }
     setState({ status: "uploading" });
     try {
-      const result = await uploadPracticeSession(userId, source, file);
+      const result = await uploadPracticeSession(source, file);
       setState({ status: "success", result });
       onUploaded?.(result);
     } catch (error) {

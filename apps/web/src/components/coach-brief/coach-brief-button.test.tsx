@@ -60,7 +60,7 @@ describe("CoachBriefButton", () => {
     await user.click(screen.getByRole("button", { name: /download coach-ready brief/i }));
 
     expect(await screen.findByRole("button", { name: /download coach-ready brief/i })).toBeEnabled();
-    expect(mockGetPracticeCombines).toHaveBeenCalledWith(42);
+    expect(mockGetPracticeCombines).toHaveBeenCalledWith();
     expect(mockToBlob).toHaveBeenCalled();
   });
 

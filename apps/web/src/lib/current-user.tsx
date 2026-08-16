@@ -8,117 +8,93 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ApiError, getUserProfile } from "@/lib/api";
-import { PlayerSwitcherDialog } from "@/components/player-switcher/player-switcher-dialog";
-
-const STORAGE_KEY = "debrief-golf-current-user";
-
-export interface CurrentUser {
-  id: number;
-  name: string;
-}
+import {
+  ApiError,
+  getCurrentUser,
+  login as loginRequest,
+  logout as logoutRequest,
+  register as registerRequest,
+  type UserProfile,
+} from "@/lib/api";
 
 export interface CurrentUserContextValue {
-  /** `null` before the initial localStorage read resolves, and whenever
-   * no player has been chosen yet. */
-  user: CurrentUser | null;
-  /** True only during the initial load (including the one-time
-   * re-validation of a stored id against the backend) — not during
-   * ordinary picker interactions. */
+  /** The signed-in player, or `null` when nobody is. */
+  user: UserProfile | null;
+  /** True only while the initial "who am I" request is in flight. */
   loading: boolean;
-  openPicker: () => void;
-  clearUser: () => void;
+  signIn: (email: string, password: string) => Promise<void>;
+  signUp: (name: string, email: string, password: string) => Promise<void>;
+  signOut: () => Promise<void>;
+  /** Re-reads the session — for after a profile edit. */
+  refresh: () => Promise<void>;
 }
 
 const CurrentUserContext = createContext<CurrentUserContextValue | null>(null);
 
-function readStoredUser(): CurrentUser | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as unknown;
-    if (
-      typeof parsed === "object" &&
-      parsed !== null &&
-      typeof (parsed as CurrentUser).id === "number" &&
-      typeof (parsed as CurrentUser).name === "string"
-    ) {
-      return parsed as CurrentUser;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
+/**
+ * Identity is whatever the session cookie says (Phase 10). Before that this
+ * provider kept a user id in localStorage, which was a *preference*, not an
+ * identity — anyone could pick any player's name out of a search box and act
+ * as them. Nothing here can name a user any more: the browser holds an
+ * HttpOnly cookie that script can't read, and the server decides who that is.
+ */
 export function CurrentUserProvider({ children }: { children: ReactNode }) {
-  const [user, setUserState] = useState<CurrentUser | null>(null);
+  const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
-  const [pickerOpen, setPickerOpen] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setUser(await getCurrentUser());
+    } catch (error) {
+      // 401 is the ordinary "not signed in" answer, not a failure worth
+      // surfacing. Anything else (API down, network) also leaves the app
+      // signed out — there's no useful half-authenticated state.
+      if (!(error instanceof ApiError)) {
+        console.error("Failed to resolve the current session", error);
+      }
+      setUser(null);
+    }
+  }, []);
 
   useEffect(() => {
-    const stored = readStoredUser();
-    if (!stored) {
-      setLoading(false);
-      return;
-    }
-    // Re-validate against the backend: the stored player may have deleted
-    // their account (the /settings/privacy "delete my account" flow) since
-    // this browser last used it, and silently acting as a user ID that no
-    // longer exists is worse than asking again.
     let cancelled = false;
-    getUserProfile(stored.id)
-      .then((profile) => {
-        if (!cancelled) setUserState({ id: profile.id, name: profile.name });
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        if (error instanceof ApiError && error.status === 404) {
-          window.localStorage.removeItem(STORAGE_KEY);
-          setUserState(null);
-        } else {
-          // Network hiccup, not a real "this player is gone" signal —
-          // keep the cached value rather than forcing a re-pick.
-          setUserState(stored);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    void load().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
+  }, [load]);
+
+  const signIn = useCallback(async (email: string, password: string) => {
+    setUser(await loginRequest({ email, password }));
   }, []);
 
-  const setUser = useCallback((next: CurrentUser) => {
-    setUserState(next);
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const signUp = useCallback(async (name: string, email: string, password: string) => {
+    setUser(await registerRequest({ name, email, password }));
   }, []);
 
-  const clearUser = useCallback(() => {
-    setUserState(null);
-    window.localStorage.removeItem(STORAGE_KEY);
+  const signOut = useCallback(async () => {
+    try {
+      await logoutRequest();
+    } catch (error) {
+      // Deliberately swallowed rather than rethrown. Signing out always
+      // succeeds from the user's point of view: the local session is
+      // dropped either way, and leaving the UI claiming someone is signed
+      // in after they asked to leave is worse than a cookie that outlives
+      // its TTL server-side. Rethrowing would also mean every caller needs
+      // a try/catch around a click handler to avoid an unhandled rejection.
+      console.error("Logout request failed; clearing the local session anyway", error);
+    } finally {
+      setUser(null);
+    }
   }, []);
-
-  const openPicker = useCallback(() => setPickerOpen(true), []);
 
   return (
-    <CurrentUserContext.Provider value={{ user, loading, openPicker, clearUser }}>
+    <CurrentUserContext.Provider
+      value={{ user, loading, signIn, signUp, signOut, refresh: load }}
+    >
       {children}
-      <PlayerSwitcherDialog
-        open={pickerOpen}
-        currentUser={user}
-        onClose={() => setPickerOpen(false)}
-        onSelect={(picked) => {
-          setUser(picked);
-          setPickerOpen(false);
-        }}
-        onClear={() => {
-          clearUser();
-          setPickerOpen(false);
-        }}
-      />
     </CurrentUserContext.Provider>
   );
 }

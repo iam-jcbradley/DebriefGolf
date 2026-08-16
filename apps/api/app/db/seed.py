@@ -19,11 +19,16 @@ import random
 from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
 
+from app.core.config import settings
+from app.core.security import hash_password
 from app.db.session import engine
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, StrokesGainedBenchmark, User
 from app.services.benchmarks import generate_benchmark_rows
 
 DEMO_EMAIL = "demo@debriefgolf.app"
+# Login exists as of Phase 10, so the demo account needs credentials to be
+# usable. Printed on seed rather than left for someone to find in here.
+DEMO_PASSWORD = "demo-golfer-password"
 COURSE_NAME = "Pinehurst Creek Golf Club"
 
 # (par, yardage)
@@ -254,7 +259,12 @@ def seed() -> None:
             print("Delete the row (or the db_data volume) and re-run to reseed.")
             return
 
-        user = User(email=DEMO_EMAIL, name="Demo Golfer", handicap_index=5.0)
+        user = User(
+            email=DEMO_EMAIL,
+            name="Demo Golfer",
+            handicap_index=5.0,
+            password_hash=hash_password(DEMO_PASSWORD),
+        )
         course = Course(name=COURSE_NAME, city="Pawleys Island", state="SC")
         session.add(user)
         session.add(course)
@@ -334,6 +344,7 @@ def seed() -> None:
             f"1 round for {user.email} — score {total_score} "
             f"({total_score - par_total:+d}), {shot_count} shots."
         )
+        print(f"Log in at {settings.frontend_url} with {DEMO_EMAIL} / {DEMO_PASSWORD}")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ export function CoachBriefButton({ round, analytics }: CoachBriefButtonProps) {
       // Practice Hub shows (app/services/practice_combines.py); a brand-new
       // player with no data on file yet still gets a brief, just an empty
       // agenda section.
-      const combinesResult = await getPracticeCombines(round.user_id).catch(() => ({
+      const combinesResult = await getPracticeCombines().catch(() => ({
         combines: [],
       }));
 

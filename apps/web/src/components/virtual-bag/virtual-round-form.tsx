@@ -14,14 +14,13 @@ const PLATFORMS: { value: SimPlatform; label: string }[] = [
 ];
 
 export interface VirtualRoundFormProps {
-  userId: number | null;
   onCreated?: (round: VirtualRound) => void;
 }
 
 /** Logs a simulator round (PRD §6.2). Scorecard-level only — see
  * `app.models.virtual_round.VirtualRound` for why this stays a separate
  * table from `Round` rather than a flag on it. */
-export function VirtualRoundForm({ userId, onCreated }: VirtualRoundFormProps) {
+export function VirtualRoundForm({ onCreated }: VirtualRoundFormProps) {
   const [platform, setPlatform] = useState<SimPlatform>("gspro");
   const [courseName, setCourseName] = useState("");
   const [totalScore, setTotalScore] = useState("");
@@ -30,11 +29,6 @@ export function VirtualRoundForm({ userId, onCreated }: VirtualRoundFormProps) {
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (userId === null) {
-      setStatus("error");
-      setErrorMessage("Enter a user ID before logging a round.");
-      return;
-    }
     if (courseName.trim() === "") {
       setStatus("error");
       setErrorMessage("Enter a course name.");
@@ -44,7 +38,6 @@ export function VirtualRoundForm({ userId, onCreated }: VirtualRoundFormProps) {
     setStatus("saving");
     try {
       const round = await createVirtualRound({
-        user_id: userId,
         platform,
         course_name: courseName.trim(),
         total_score: totalScore.trim() === "" ? null : Number(totalScore),

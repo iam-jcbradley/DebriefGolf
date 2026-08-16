@@ -27,6 +27,7 @@ vi.mock("mapbox-gl", () => ({
 vi.mock("next/navigation", () => ({
   useParams: vi.fn(),
   usePathname: () => "/rounds/1",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
 }));
 
 vi.mock("@/lib/api", async (importOriginal) => {
@@ -163,6 +164,6 @@ describe("RoundDetailPage", () => {
     render(<RoundDetailPage />);
 
     await screen.findByRole("img", { name: "Hole 1 replay" });
-    expect(mockGetSmartBag).toHaveBeenCalledWith(9);
+    expect(mockGetSmartBag).toHaveBeenCalledWith();
   });
 });

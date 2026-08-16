@@ -5,20 +5,18 @@ calculation — see `app.models.virtual_round.VirtualRound`.
 """
 
 from datetime import UTC, datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import select
 
-from app.db.session import get_session
-from app.models import SimPlatform, User, VirtualRound
+from app.api.deps import CurrentUser, SessionDep
+from app.models import SimPlatform, VirtualRound
 
 router = APIRouter()
 
 
 class VirtualRoundCreateIn(BaseModel):
-    user_id: int
     platform: SimPlatform
     course_name: str
     played_at: datetime | None = None
@@ -29,13 +27,10 @@ class VirtualRoundCreateIn(BaseModel):
 
 @router.post("/virtual-rounds", status_code=201)
 def create_virtual_round(
-    payload: VirtualRoundCreateIn, session: Annotated[Session, Depends(get_session)]
+    payload: VirtualRoundCreateIn, user: CurrentUser, session: SessionDep
 ) -> VirtualRound:
-    if session.get(User, payload.user_id) is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
     virtual_round = VirtualRound(
-        user_id=payload.user_id,
+        user_id=user.id,
         platform=payload.platform,
         course_name=payload.course_name,
         played_at=payload.played_at or datetime.now(UTC),
@@ -50,20 +45,24 @@ def create_virtual_round(
 
 
 @router.get("/virtual-rounds")
-def list_virtual_rounds(
-    session: Annotated[Session, Depends(get_session)], user_id: int | None = None
-) -> list[VirtualRound]:
-    query = select(VirtualRound).order_by(VirtualRound.played_at.desc())
-    if user_id is not None:
-        query = query.where(VirtualRound.user_id == user_id)
-    return list(session.exec(query).all())
+def list_virtual_rounds(user: CurrentUser, session: SessionDep) -> list[VirtualRound]:
+    return list(
+        session.exec(
+            select(VirtualRound)
+            .where(VirtualRound.user_id == user.id)
+            .order_by(VirtualRound.played_at.desc())
+        ).all()
+    )
 
 
 @router.get("/virtual-rounds/{virtual_round_id}")
 def get_virtual_round(
-    virtual_round_id: int, session: Annotated[Session, Depends(get_session)]
+    virtual_round_id: int, user: CurrentUser, session: SessionDep
 ) -> VirtualRound:
     virtual_round = session.get(VirtualRound, virtual_round_id)
-    if virtual_round is None:
+    # 404 rather than 403 for someone else's row: a 403 would confirm that a
+    # virtual round with this id exists. The same rule applies everywhere a
+    # route takes an id (see rounds.py's `_owned_round`).
+    if virtual_round is None or virtual_round.user_id != user.id:
         raise HTTPException(status_code=404, detail="Virtual round not found")
     return virtual_round

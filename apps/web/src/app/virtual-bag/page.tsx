@@ -1,7 +1,7 @@
 "use client";
 
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
 import { Overline } from "@/components/ui/overline";
@@ -12,7 +12,7 @@ import { useVirtualRounds } from "@/lib/use-virtual-rounds";
 
 export default function VirtualBagPage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = useVirtualRounds(user?.id ?? null);
+  const { state, refresh } = useVirtualRounds(user !== null);
 
   return (
     <div className="min-h-screen">
@@ -29,7 +29,7 @@ export default function VirtualBagPage() {
 
         {!user ? (
           <div className="mt-8">
-            <NoPlayerSelected description="Choose a player to log and view their sim rounds." />
+            <SignedOut description="Sign in to log and view your sim rounds." />
           </div>
         ) : (
           <>
@@ -43,7 +43,7 @@ export default function VirtualBagPage() {
                   Logging for <strong className="text-foreground">{user.name}</strong>.
                 </p>
                 <div className="mt-4">
-                  <VirtualRoundForm userId={user.id} onCreated={refresh} />
+                  <VirtualRoundForm onCreated={refresh} />
                 </div>
               </CardContent>
             </Card>

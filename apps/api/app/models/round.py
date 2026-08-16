@@ -16,7 +16,7 @@ class RoundStatus(StrEnum):
 
 class Round(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
-    user_id: int = Field(foreign_key="user.id")
+    user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
     # Nullable: a freshly-uploaded .FIT activity (app/services/parsers/fit_parser.py)
     # has GPS points but no matched course yet — course-matching (GPS bounding
     # box -> Course) is its own feature, not built. The audit wizard (Phase 3)

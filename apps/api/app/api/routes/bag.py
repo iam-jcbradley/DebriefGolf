@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.api.deps import CurrentUser, SessionDep
 from app.models import Hole, Round, Shot
 from app.services.dispersion import compute_dispersion_ellipse
 from app.services.geometry import ShotGeometryRow, compute_lateral_by_club
@@ -14,10 +13,7 @@ from app.services.smart_bag import compute_club_gapping, compute_gaps, shot_carr
 router = APIRouter()
 
 
-def _fetch_shot_geometry_rows(session: Session, round_ids: list[int]) -> list[ShotGeometryRow]:
-    if not round_ids:
-        return []
-
+def _fetch_shot_geometry_rows(session: Session, user_id: int) -> list[ShotGeometryRow]:
     query = (
         select(
             Shot.club,
@@ -29,7 +25,8 @@ def _fetch_shot_geometry_rows(session: Session, round_ids: list[int]) -> list[Sh
             func.ST_X(Hole.green_center).label("green_lng"),
         )
         .join(Hole, Shot.hole_id == Hole.id)
-        .where(Shot.round_id.in_(round_ids))
+        .join(Round, Shot.round_id == Round.id)
+        .where(Round.user_id == user_id)
         .where(Shot.club.is_not(None))
         .where(Shot.location.is_not(None))
         .where(Hole.tee_location.is_not(None))
@@ -38,8 +35,8 @@ def _fetch_shot_geometry_rows(session: Session, round_ids: list[int]) -> list[Sh
     return [ShotGeometryRow(**row._mapping) for row in session.exec(query)]  # type: ignore[arg-type]
 
 
-@router.get("/bag/{user_id}")
-def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.get("/bag")
+def get_smart_bag(user: CurrentUser, session: SessionDep) -> dict:
     """Smart Bag club gapping (PRD §5.3): outlier-filtered carry stats per
     club, aggregated across every round this user has played, plus the
     consecutive-club carry gaps in bag order. Lateral dispersion and a
@@ -47,12 +44,27 @@ def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)
     location-tagged shot (PRD §10 Phase 4 — see app/services/geometry.py for
     where the lateral offset comes from).
     """
-    round_ids = list(
-        session.exec(select(Round.id).where(Round.user_id == user_id)).all()
+    # One join rather than "select this user's round ids, then select shots
+    # where round_id IN (...)": that was two round trips and an unbounded IN
+    # list that grew with every round the user ever played.
+    #
+    # Raw columns rather than `select(Shot)`: this reads every shot the
+    # player has ever recorded, and building that many ORM instances costs
+    # ~5x what the five columns actually used cost. See
+    # app/services/shot_view.py.
+    shots = list(
+        session.exec(
+            select(
+                Shot.club,
+                Shot.start_distance_yards,
+                Shot.end_distance_yards,
+                Shot.end_lie,
+                Shot.strokes_gained,
+            )
+            .join(Round, Shot.round_id == Round.id)
+            .where(Round.user_id == user.id)
+        ).all()
     )
-    shots: list[Shot] = []
-    if round_ids:
-        shots = list(session.exec(select(Shot).where(Shot.round_id.in_(round_ids))).all())
 
     distances_by_club: dict[str, list[float]] = defaultdict(list)
     for shot in shots:
@@ -60,7 +72,7 @@ def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)
         if distance is not None and distance > 0 and shot.club is not None:
             distances_by_club[shot.club].append(distance)
 
-    lateral_by_club = compute_lateral_by_club(_fetch_shot_geometry_rows(session, round_ids))
+    lateral_by_club = compute_lateral_by_club(_fetch_shot_geometry_rows(session, user.id))
 
     stats = compute_club_gapping(distances_by_club, lateral_by_club=lateral_by_club)
     gaps = compute_gaps(stats)
@@ -97,7 +109,7 @@ def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)
         clubs.append(club_payload)
 
     return {
-        "user_id": user_id,
+        "user_id": user.id,
         "clubs": clubs,
         "gaps": [
             {

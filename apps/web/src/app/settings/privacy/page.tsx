@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,7 +22,7 @@ function DataExportPanel({ userId }: { userId: number }) {
   async function handleExport() {
     setState("working");
     try {
-      const data = await getUserDataExport(userId);
+      const data = await getUserDataExport();
       const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -63,7 +63,7 @@ function DataExportPanel({ userId }: { userId: number }) {
   );
 }
 
-function DeleteAccountPanel({ userId, onDeleted }: { userId: number; onDeleted: () => void }) {
+function DeleteAccountPanel({ onDeleted }: { onDeleted: () => void }) {
   const [state, setState] = useState<DeleteState>("idle");
   const [confirmText, setConfirmText] = useState("");
   const [message, setMessage] = useState("");
@@ -71,7 +71,7 @@ function DeleteAccountPanel({ userId, onDeleted }: { userId: number; onDeleted: 
   async function handleDelete() {
     setState("working");
     try {
-      await deleteUserData(userId);
+      await deleteUserData();
       // The player whose data this was just IS the current player — the
       // parent swaps this whole panel out for a deletion confirmation and
       // clears the persisted selection, so there's no "done" state to show
@@ -189,11 +189,12 @@ function PrivacyNotice() {
 }
 
 export default function PrivacySettingsPage() {
-  const { user, clearUser } = useCurrentUser();
-  // Deliberately independent of `user`: clearing the current player (once
-  // their account is deleted) flips `user` to null immediately, which
-  // would otherwise swap this section over to <NoPlayerSelected> before
-  // anyone could see the "your account was deleted" confirmation.
+  const { user, signOut } = useCurrentUser();
+  // Deliberately independent of `user`: signing out (once the account is
+  // deleted) flips `user` to null immediately, which would otherwise swap
+  // this section over to <SignedOut> before anyone could see the "your
+  // account was deleted" confirmation. Bug found in Phase 8's live-browser
+  // pass; the same trap applies to sessions.
   const [deletedPlayerName, setDeletedPlayerName] = useState<string | null>(null);
 
   return (
@@ -222,15 +223,14 @@ export default function PrivacySettingsPage() {
               </p>
               <DataExportPanel userId={user.id} />
               <DeleteAccountPanel
-                userId={user.id}
                 onDeleted={() => {
                   setDeletedPlayerName(user.name);
-                  clearUser();
+                  void signOut();
                 }}
               />
             </>
           ) : (
-            <NoPlayerSelected description="Choose a player to manage their data." />
+            <SignedOut description="Sign in to manage your data." />
           )}
         </div>
 

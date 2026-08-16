@@ -5,6 +5,7 @@ import { SettingsTabs } from "./settings-tabs";
 const mockUsePathname = vi.fn();
 vi.mock("next/navigation", () => ({
   usePathname: () => mockUsePathname(),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
 }));
 
 describe("SettingsTabs", () => {

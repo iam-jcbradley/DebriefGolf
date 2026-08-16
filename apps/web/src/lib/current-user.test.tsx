@@ -1,143 +1,171 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { ApiError, getUserProfile } from "@/lib/api";
+import { ApiError, getCurrentUser, login, logout, register } from "@/lib/api";
 import { CurrentUserProvider, useCurrentUser } from "@/lib/current-user";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
-  return { ...actual, getUserProfile: vi.fn(), searchUsers: vi.fn(), createUser: vi.fn() };
+  return {
+    ...actual,
+    getCurrentUser: vi.fn(),
+    login: vi.fn(),
+    logout: vi.fn(),
+    register: vi.fn(),
+  };
 });
 
-const mockGetUserProfile = vi.mocked(getUserProfile);
+const mockGetCurrentUser = vi.mocked(getCurrentUser);
+const mockLogin = vi.mocked(login);
+const mockLogout = vi.mocked(logout);
+const mockRegister = vi.mocked(register);
 
-const STORAGE_KEY = "debrief-golf-current-user";
+const JANE = {
+  id: 6,
+  email: "jane@example.com",
+  name: "Jane Doe",
+  handicap_index: 5,
+  created_at: "2026-01-01T00:00:00Z",
+};
 
 function Consumer() {
-  const { user, loading, openPicker, clearUser } = useCurrentUser();
+  const { user, loading, signIn, signUp, signOut } = useCurrentUser();
   return (
     <div>
       <p data-testid="loading">{String(loading)}</p>
       <p data-testid="user">{user ? user.name : "none"}</p>
-      <button type="button" onClick={openPicker}>
-        open
+      <button type="button" onClick={() => void signIn("jane@example.com", "pw")}>
+        sign in
       </button>
-      <button type="button" onClick={clearUser}>
-        clear
+      <button type="button" onClick={() => void signUp("Jane Doe", "jane@example.com", "pw")}>
+        sign up
+      </button>
+      <button type="button" onClick={() => void signOut()}>
+        sign out
       </button>
     </div>
   );
 }
 
+function renderProvider() {
+  return render(
+    <CurrentUserProvider>
+      <Consumer />
+    </CurrentUserProvider>
+  );
+}
+
 beforeEach(() => {
-  mockGetUserProfile.mockReset();
-  window.localStorage.clear();
+  mockGetCurrentUser.mockReset();
+  mockLogin.mockReset();
+  mockLogout.mockReset();
+  mockRegister.mockReset();
 });
 
 describe("CurrentUserProvider", () => {
-  it("starts with no user when localStorage is empty", async () => {
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
+  it("resolves the session from the API on mount", async () => {
+    mockGetCurrentUser.mockResolvedValue(JANE);
+
+    renderProvider();
+
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    // Identity comes from the cookie — nothing is passed, and nothing is
+    // read from localStorage.
+    expect(mockGetCurrentUser).toHaveBeenCalledWith();
+  });
+
+  it("is signed out when the API answers 401", async () => {
+    mockGetCurrentUser.mockRejectedValue(new ApiError(401, "Not authenticated"));
+
+    renderProvider();
+
     await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
     expect(screen.getByTestId("user")).toHaveTextContent("none");
   });
 
-  it("restores a stored user after re-validating it against the backend", async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: 6, name: "Jane Doe" }));
-    mockGetUserProfile.mockResolvedValue({
-      id: 6, email: "jane@example.com", name: "Jane Doe", handicap_index: 5,
-      created_at: "2026-01-01T00:00:00Z",
-    });
+  it("is signed out when the API is unreachable", async () => {
+    // No half-authenticated state: a network failure is treated as signed
+    // out rather than trusting a stale local guess, which is what the
+    // localStorage-backed version used to do.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetCurrentUser.mockRejectedValue(new Error("network down"));
 
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
-
-    expect(await screen.findByTestId("user")).toHaveTextContent("Jane Doe");
-    expect(mockGetUserProfile).toHaveBeenCalledWith(6);
-  });
-
-  it("clears a stored user that no longer exists (404)", async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: 6, name: "Jane Doe" }));
-    mockGetUserProfile.mockRejectedValue(new ApiError(404, "User not found"));
-
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
+    renderProvider();
 
     await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
     expect(screen.getByTestId("user")).toHaveTextContent("none");
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    consoleError.mockRestore();
   });
 
-  it("keeps the cached user on a non-404 (network) error", async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: 6, name: "Jane Doe" }));
-    mockGetUserProfile.mockRejectedValue(new Error("network down"));
-
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
+  it("does not read identity from localStorage", async () => {
+    window.localStorage.setItem(
+      "debrief-golf-current-user",
+      JSON.stringify({ id: 99, name: "Someone Else" })
     );
+    mockGetCurrentUser.mockRejectedValue(new ApiError(401, "Not authenticated"));
 
-    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
-    expect(screen.getByTestId("user")).toHaveTextContent("Jane Doe");
-  });
-
-  it("ignores malformed localStorage content", async () => {
-    window.localStorage.setItem(STORAGE_KEY, "not json");
-
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
+    renderProvider();
 
     await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
     expect(screen.getByTestId("user")).toHaveTextContent("none");
-    expect(mockGetUserProfile).not.toHaveBeenCalled();
   });
 
-  it("clearUser removes the persisted player", async () => {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ id: 6, name: "Jane Doe" }));
-    mockGetUserProfile.mockResolvedValue({
-      id: 6, email: "jane@example.com", name: "Jane Doe", handicap_index: 5,
-      created_at: "2026-01-01T00:00:00Z",
-    });
+  it("signIn adopts the returned user", async () => {
+    mockGetCurrentUser.mockRejectedValue(new ApiError(401, "Not authenticated"));
+    mockLogin.mockResolvedValue(JANE);
     const user = userEvent.setup();
 
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
+
+    await user.click(screen.getByRole("button", { name: "sign in" }));
+
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+    expect(mockLogin).toHaveBeenCalledWith({ email: "jane@example.com", password: "pw" });
+  });
+
+  it("signUp adopts the returned user", async () => {
+    mockGetCurrentUser.mockRejectedValue(new ApiError(401, "Not authenticated"));
+    mockRegister.mockResolvedValue(JANE);
+    const user = userEvent.setup();
+
+    renderProvider();
+    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
+
+    await user.click(screen.getByRole("button", { name: "sign up" }));
+
+    expect(await screen.findByText("Jane Doe")).toBeInTheDocument();
+  });
+
+  it("signOut clears the user", async () => {
+    mockGetCurrentUser.mockResolvedValue(JANE);
+    mockLogout.mockResolvedValue({ logged_out: true });
+    const user = userEvent.setup();
+
+    renderProvider();
     await screen.findByText("Jane Doe");
 
-    await user.click(screen.getByRole("button", { name: "clear" }));
+    await user.click(screen.getByRole("button", { name: "sign out" }));
 
-    expect(screen.getByTestId("user")).toHaveTextContent("none");
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBeNull();
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("none"));
+    expect(mockLogout).toHaveBeenCalled();
   });
 
-  it("openPicker opens the player switcher dialog", async () => {
+  it("signOut clears the user even if the request fails", async () => {
+    // Leaving the UI claiming someone is signed in after they asked to
+    // leave is worse than a cookie that outlives its TTL server-side.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetCurrentUser.mockResolvedValue(JANE);
+    mockLogout.mockRejectedValue(new Error("network down"));
     const user = userEvent.setup();
-    render(
-      <CurrentUserProvider>
-        <Consumer />
-      </CurrentUserProvider>
-    );
-    await waitFor(() => expect(screen.getByTestId("loading")).toHaveTextContent("false"));
 
-    await user.click(screen.getByRole("button", { name: "open" }));
+    renderProvider();
+    await screen.findByText("Jane Doe");
 
-    expect(await screen.findByText("Who's playing?")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "sign out" }));
+
+    await waitFor(() => expect(screen.getByTestId("user")).toHaveTextContent("none"));
+    consoleError.mockRestore();
   });
 
   it("throws when useCurrentUser is used outside the provider", () => {

@@ -9,6 +9,7 @@ import RoundAuditPage from "./page";
 vi.mock("next/navigation", () => ({
   useParams: vi.fn(),
   usePathname: () => "/rounds/42/audit",
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn(), refresh: vi.fn() }),
 }));
 
 const mockUseParams = vi.mocked(useParams);
