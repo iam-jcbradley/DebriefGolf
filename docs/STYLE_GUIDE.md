@@ -111,7 +111,7 @@ approximation — good enough, and more portable.
   the content column visibly jumps as a reader moves between pages:
   | Width | For |
   |---|---|
-  | `max-w-5xl` | Analytics and dashboard pages — multi-column, side-by-side cards (`/`, `/practice`, hole replay) |
+  | `max-w-5xl` | Analytics and dashboard pages — multi-column, side-by-side cards (`/`, `/practice`, hole replay, manual shot entry) |
   | `max-w-3xl` | Reading pages and single-flow forms (`/rounds`, `/rounds/new`, settings, the audit wizard) |
   | `max-w-md` | Auth only (`/login`) |
 
@@ -120,6 +120,16 @@ out: no Lucide, no Heroicons, no glyph fonts, and no icon-only buttons. A
 control that needs a label gets a word ("Menu", "Close", "Edit geometry"),
 not a hamburger. This rule was being cited from memory in code comments
 before it was ever written down here, which is how conventions get lost.
+
+**Focus.** A crisp `outline-2 outline-offset-2 outline-ring`, not the
+shadcn-default blurred `ring` — a soft halo is the same kind of glow the
+"avoid shadows" rule above already rejects for surfaces, and it's the one
+place the `destructive` button used to look pink instead of rust.
+`Input`/`Select` thicken their bottom rule to 2px on focus (`-mb-px`
+cancels the added height so nothing shifts) and add a faint `bg-muted/40`
+tint — a 1px color-only change undershoots WCAG 2.4.13's indicator-size
+floor, and next to a `.kicker` label in the same muted palette it was easy
+to miss which field actually had focus.
 
 ## 5. Imagery & texture
 

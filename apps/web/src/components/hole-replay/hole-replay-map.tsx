@@ -136,7 +136,12 @@ export function HoleReplayMap({
 
   if (!token || mapError) {
     return (
-      <div>
+      // Caps the schematic fallback's width: `HoleReplaySvg` is fluid
+      // (`w-full`, fixed 2:3 aspect), and both callers of this component
+      // put it in a column well over 420px wide, where an unconstrained
+      // width would blow the height up to match — an ~890px-tall map in
+      // the manual-entry two-pane layout, once measured, not guessed.
+      <div className="max-w-[420px]">
         {!token && (
           <p className="mb-2 text-xs text-muted-foreground">
             Satellite imagery needs a Mapbox token (NEXT_PUBLIC_MAPBOX_TOKEN) — showing a

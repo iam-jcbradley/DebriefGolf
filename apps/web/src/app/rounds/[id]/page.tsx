@@ -178,7 +178,7 @@ export default function RoundDetailPage() {
                     {replay.yardage}y
                   </span>
                 </div>
-                <div className="mt-3 max-w-[420px]">
+                <div className="mt-3">
                   <HoleReplayMap
                     hole={replay}
                     ellipse={ellipse}

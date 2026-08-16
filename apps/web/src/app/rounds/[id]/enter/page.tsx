@@ -132,7 +132,7 @@ export default function EnterRoundPage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+      <main className="mx-auto max-w-5xl space-y-6 px-6 py-10">
         <div>
           <Link href="/rounds" className="text-sm text-muted-foreground underline hover:text-foreground">
             &larr; Back to rounds
