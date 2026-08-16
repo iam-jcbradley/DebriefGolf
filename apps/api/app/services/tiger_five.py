@@ -79,15 +79,22 @@ def evaluate_hole(
     def _sg(shot: Shot) -> float | None:
         if strokes_gained is None:
             return shot.strokes_gained
-        return strokes_gained.get(shot.id)
+        # `Shot.id` is typed `int | None` (SQLModel primary keys are
+        # nullable pre-insert), but every shot here was just fetched off
+        # the round it belongs to, so it always has one.
+        return strokes_gained.get(shot.id)  # pyright: ignore[reportArgumentType]
 
     blown_recoveries = sum(
         1
         for s in shots
         if s.start_lie not in _NON_RECOVERY_LIES
         and s.start_distance_yards <= BLOWN_RECOVERY_THRESHOLD_YARDS
-        and _sg(s) is not None
-        and _sg(s) < 0
+        # Walrus rather than two separate `_sg(s)` calls: pyright can't
+        # narrow `float | None` to `float` across two independent calls to
+        # the same function, and calling it twice per shot was wasteful
+        # regardless of the type checker.
+        and (sg := _sg(s)) is not None
+        and sg < 0
     )
     # Count the penalty-stroke marker row itself (start_lie == end_lie ==
     # penalty — see app/db/seed.py hole 14 for the pattern), not every row

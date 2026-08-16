@@ -40,10 +40,23 @@ jobs:
         run: uv sync --frozen
       - name: Lint (ruff)
         run: uv run ruff check .
+      - name: Type check (pyright)
+        # basic mode, with a handful of SQLModel/GeoAlchemy2 stub-shape
+        # rules demoted to warning — see the [tool.pyright] comment in
+        # pyproject.toml for why those specifically don't fail the build.
+        run: uv run pyright
+      - name: Dependency vulnerability scan (pip-audit)
+        run: uv run pip-audit
       - name: Run migrations
         run: uv run alembic upgrade head
       - name: Test (pytest)
-        run: uv run pytest
+        run: uv run pytest --cov=app --cov-report=term-missing --cov-report=xml
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: apps/api/coverage.xml
 
   # Standalone pip project, outside the uv workspace and the api/web apps —
   # it had tests from the day it landed but nothing ever ran them.
@@ -58,9 +71,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install dependencies
-        run: pip install -r requirements-dev.txt ruff
+        run: pip install -r requirements-dev.txt ruff pip-audit
       - name: Lint (ruff)
         run: ruff check .
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit
       - name: Test (pytest)
         run: pytest
 
@@ -83,7 +98,43 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Lint
         run: pnpm lint
+      - name: Dependency vulnerability scan (pnpm audit)
+        # Non-blocking: the two findings currently outstanding are a DoS
+        # advisory in `image-size`, six levels deep in deck.gl's glTF
+        # texture-loading chain (a code path this app never exercises —
+        # DebriefGolf's map views are 2D overlays, not 3D tiles/textures),
+        # with no patched version published upstream yet at all. Kept as a
+        # real, visible step rather than dropped, so a *new* finding still
+        # shows up here instead of nowhere.
+        run: pnpm audit
+        continue-on-error: true
       - name: Test
-        run: pnpm test
+        run: pnpm test:coverage
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-coverage
+          path: apps/web/coverage
       - name: Build
         run: pnpm build
+
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - context: apps/api
+            target: prod
+          - context: apps/web
+            target: prod
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.context }} (${{ matrix.target }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.context }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.context }}

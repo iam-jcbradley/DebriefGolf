@@ -1,0 +1,43 @@
+version: 2
+
+updates:
+  # apps/api — uv-managed (pyproject.toml + uv.lock)
+  - package-ecosystem: "uv"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # apps/web — pnpm-managed
+  - package-ecosystem: "npm"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # tools/garmin_import — standalone pip project, outside the uv workspace
+  # (see CLAUDE.md); pinned versions there are deliberate (garminconnect in
+  # particular — see garmin_client.py's module docstring), so an update PR
+  # here needs the same re-verification-against-installed-source treatment
+  # before merging, not an automatic merge.
+  - package-ecosystem: "pip"
+    directory: "/tools/garmin_import"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+
+  # The two Dockerfiles' own base images.
+  - package-ecosystem: "docker"
+    directory: "/apps/api"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/apps/web"
+    schedule:
+      interval: "weekly"
+
+  # ci.yml and codeql.yml themselves.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

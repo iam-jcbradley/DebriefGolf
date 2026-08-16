@@ -22,7 +22,10 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pip-audit>=2.10.1",
     "pytest>=9.1.1",
+    "pytest-cov>=6.0.0",
+    "pyright>=1.1.400",
     "ruff>=0.16.3",
 ]
 
@@ -36,3 +39,33 @@ select = ["E", "F", "I", "UP", "B"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.pyright]
+include = ["app"]
+exclude = ["**/__pycache__", "alembic/versions"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+
+# SQLModel table classes and GeoAlchemy2 Geometry columns don't type-check
+# cleanly under these five rules in `basic` mode — not bugs, just stub gaps
+# in how SQLModel represents InstrumentedAttributes (e.g. `Model.col.in_()`
+# reads as a method on the column's plain Python type, not on the column
+# expression) and nullable primary keys (`id: int | None` pre-insert, but
+# always `int` once a row is actually fetched, which is every row every
+# route handler touches). Verified narrowly: with these at their normal
+# `error` severity, 101 of 103 pre-existing diagnostics are exactly this
+# shape, concentrated entirely in app/api/routes/, app/models/, and
+# app/db/seed.py — the SQLModel-facing layers — while app/services/ (PRD's
+# "touches no database session" layer) is clean. The two that were real
+# (app/services/tiger_five.py) got fixed, not silenced. Demoting these
+# still surfaces them as warnings in CI output; it just doesn't fail the
+# build on a class of finding that would otherwise require rewriting how
+# every table model annotates its geometry/PK columns to resolve, which is
+# a bigger and separately-justified change than "add a CI type check."
+reportArgumentType = "warning"
+reportCallIssue = "warning"
+reportAttributeAccessIssue = "warning"
+reportOptionalMemberAccess = "warning"
+reportAssignmentType = "warning"

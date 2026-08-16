@@ -8,7 +8,7 @@ or database. That's a deliberate boundary, not an oversight: it keeps
 docs/DATA_PRIVACY.md's "third-party OAuth data" framing accurate rather
 than silently expanding what this app touches.
 
-Built against `garminconnect==0.3.2`'s actual installed source (inspected
+Built against `garminconnect==0.3.5`'s actual installed source (inspected
 directly, not just its README) since this whole integration is
 reverse-engineered and undocumented by Garmin itself:
 - `Garmin(email, password, return_on_mfa=True)` constructs a client.
@@ -52,8 +52,17 @@ Caveats worth knowing before relying on this:
   bot detection, or rate-limit/lock an account that authenticates
   unusually often, none of which this tool can anticipate or work around.
 - `garth` (the library this ecosystem used to depend on) is deprecated;
-  garminconnect 0.3.2 no longer requires it, which is why it's not in
+  garminconnect no longer requires it, which is why it's not in
   requirements.txt despite being mentioned in earlier drafts of this idea.
+- Pinned to `0.3.5`, not `0.3.2`, specifically for a security fix
+  (PYSEC-2026-3467, CWE-732): versions up to 0.3.4 wrote the token store to
+  disk with whatever the process umask allowed, so `.garmin_tokens/` could
+  end up world-readable (containing a live Garmin refresh token) on a
+  shared host. Re-verified against the 0.3.5 installed source before
+  bumping — every method this module calls (`login`, `resume_login`,
+  `get_golf_summary`, `get_golf_scorecard`, `get_golf_shot_data`,
+  `get_activities`, `download_activity`, `client.dump`) has the identical
+  signature it had at 0.3.2, and the full mocked test suite still passes.
 """
 
 from __future__ import annotations
