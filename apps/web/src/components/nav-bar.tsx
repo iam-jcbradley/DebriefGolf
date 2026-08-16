@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
 
 const NAV_LINKS = [
@@ -24,33 +25,43 @@ function isActive(pathname: string | null, href: string): boolean {
  */
 export function NavBar() {
   const pathname = usePathname();
+  const { user, openPicker } = useCurrentUser();
 
   return (
     <nav className="flex items-center justify-between border-b border-border px-6 py-5">
       <Link href="/" className="font-serif text-lg tracking-tight">
         Debrief Golf
       </Link>
-      <ul className="flex gap-6">
-        {NAV_LINKS.map((link) => {
-          const active = isActive(pathname, link.href);
-          return (
-            <li key={link.href}>
-              <Link
-                href={link.href}
-                aria-current={active ? "page" : undefined}
-                className={cn(
-                  "overline border-b pb-0.5 transition-colors",
-                  active
-                    ? "border-primary text-foreground"
-                    : "border-transparent hover:text-foreground"
-                )}
-              >
-                {link.label}
-              </Link>
-            </li>
-          );
-        })}
-      </ul>
+      <div className="flex items-center gap-6">
+        <ul className="flex gap-6">
+          {NAV_LINKS.map((link) => {
+            const active = isActive(pathname, link.href);
+            return (
+              <li key={link.href}>
+                <Link
+                  href={link.href}
+                  aria-current={active ? "page" : undefined}
+                  className={cn(
+                    "overline border-b pb-0.5 transition-colors",
+                    active
+                      ? "border-primary text-foreground"
+                      : "border-transparent hover:text-foreground"
+                  )}
+                >
+                  {link.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+        <button
+          type="button"
+          onClick={openPicker}
+          className="overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+        >
+          {user ? `Playing as ${user.name}` : "Choose player"}
+        </button>
+      </div>
     </nav>
   );
 }

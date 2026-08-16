@@ -44,6 +44,30 @@ def test_list_rounds_includes_seeded_round() -> None:
     assert any(r["id"] == round_id for r in response.json())
 
 
+def test_list_rounds_filters_by_user_id() -> None:
+    user_a, course_id = _seed_user_and_course()
+    with Session(engine) as session:
+        user_b = User(email=f"test-rounds-{uuid.uuid4()}@example.com", name="Other User")
+        session.add(user_b)
+        session.commit()
+        session.refresh(user_b)
+
+        round_a = Round(user_id=user_a, course_id=course_id, status=RoundStatus.verified)
+        round_b = Round(user_id=user_b.id, course_id=course_id, status=RoundStatus.verified)
+        session.add(round_a)
+        session.add(round_b)
+        session.commit()
+        session.refresh(round_a)
+        session.refresh(round_b)
+
+    response = client.get(f"/api/rounds?user_id={user_a}")
+
+    assert response.status_code == 200
+    round_ids = {r["id"] for r in response.json()}
+    assert round_a.id in round_ids
+    assert round_b.id not in round_ids
+
+
 def test_round_shots_404_for_unknown_round() -> None:
     response = client.get("/api/rounds/999999/shots")
     assert response.status_code == 404

@@ -1,21 +1,18 @@
 "use client";
 
-import { useState } from "react";
 import { NavBar } from "@/components/nav-bar";
+import { NoPlayerSelected } from "@/components/no-player-selected";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
-import { Input } from "@/components/ui/input";
 import { Overline } from "@/components/ui/overline";
 import { VirtualRoundForm } from "@/components/virtual-bag/virtual-round-form";
 import { VirtualRoundList } from "@/components/virtual-bag/virtual-round-list";
+import { useCurrentUser } from "@/lib/current-user";
 import { useVirtualRounds } from "@/lib/use-virtual-rounds";
 
 export default function VirtualBagPage() {
-  const [userIdInput, setUserIdInput] = useState("");
-  const userId = userIdInput.trim() === "" ? null : Number(userIdInput);
-  const validUserId = userId !== null && !Number.isNaN(userId) ? userId : null;
-
-  const { state, refresh } = useVirtualRounds(validUserId);
+  const { user } = useCurrentUser();
+  const { state, refresh } = useVirtualRounds(user?.id ?? null);
 
   return (
     <div className="min-h-screen">
@@ -30,46 +27,39 @@ export default function VirtualBagPage() {
           handicap.
         </p>
 
-        <Card className="mt-8">
-          <CardHeader>
-            <Overline>Log a sim round</Overline>
-            <CardTitle className="text-lg">Home Tee Hero / E6 / GSPro</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              No login yet — enter the user ID this round belongs to.
-            </p>
-            <label className="mt-3 flex max-w-40 flex-col gap-1 text-sm" htmlFor="virtual-user-id">
-              <Overline as="span">User ID</Overline>
-              <Input
-                id="virtual-user-id"
-                type="number"
-                min={1}
-                value={userIdInput}
-                onChange={(event) => setUserIdInput(event.target.value)}
-              />
-            </label>
-            <div className="mt-4">
-              <VirtualRoundForm userId={validUserId} onCreated={refresh} />
-            </div>
-          </CardContent>
-        </Card>
+        {!user ? (
+          <div className="mt-8">
+            <NoPlayerSelected description="Choose a player to log and view their sim rounds." />
+          </div>
+        ) : (
+          <>
+            <Card className="mt-8">
+              <CardHeader>
+                <Overline>Log a sim round</Overline>
+                <CardTitle className="text-lg">Home Tee Hero / E6 / GSPro</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Logging for <strong className="text-foreground">{user.name}</strong>.
+                </p>
+                <div className="mt-4">
+                  <VirtualRoundForm userId={user.id} onCreated={refresh} />
+                </div>
+              </CardContent>
+            </Card>
 
-        <Divider />
+            <Divider />
 
-        {state.status === "loading" && (
-          <p className="py-16 text-center text-muted-foreground">Loading virtual rounds…</p>
-        )}
-        {state.status === "error" && (
-          <p className="py-16 text-center text-destructive" role="alert">
-            {state.message}
-          </p>
-        )}
-        {state.status === "ready" && <VirtualRoundList rounds={state.rounds} />}
-        {state.status === "idle" && (
-          <p className="py-16 text-center text-muted-foreground">
-            Enter a user ID above to see their sim rounds.
-          </p>
+            {state.status === "loading" && (
+              <p className="py-16 text-center text-muted-foreground">Loading virtual rounds…</p>
+            )}
+            {state.status === "error" && (
+              <p className="py-16 text-center text-destructive" role="alert">
+                {state.message}
+              </p>
+            )}
+            {state.status === "ready" && <VirtualRoundList rounds={state.rounds} />}
+          </>
         )}
       </main>
     </div>

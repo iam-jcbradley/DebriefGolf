@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { useParams, useRouter } from "next/navigation";
@@ -11,6 +11,7 @@ import {
   type HoleReplay,
   type HoleSummary,
 } from "@/lib/api";
+import { renderWithProviders as render } from "@/lib/test-utils";
 import EnterRoundPage from "./page";
 
 vi.mock("mapbox-gl/dist/mapbox-gl.css", () => ({}));

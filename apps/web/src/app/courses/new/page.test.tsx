@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -9,6 +9,7 @@ import {
   type OsmCourseDraft,
   type OsmCourseSummary,
 } from "@/lib/api";
+import { renderWithProviders as render } from "@/lib/test-utils";
 import NewCoursePage from "./page";
 
 vi.mock("mapbox-gl/dist/mapbox-gl.css", () => ({}));

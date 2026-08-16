@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { NavBar } from "@/components/nav-bar";
+import { NoPlayerSelected } from "@/components/no-player-selected";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
 import {
@@ -11,6 +12,7 @@ import {
   getGarminStatus,
   startGarminAuthorize,
 } from "@/lib/api";
+import { useCurrentUser } from "@/lib/current-user";
 
 function CallbackBanner() {
   const searchParams = useSearchParams();
@@ -34,22 +36,14 @@ function CallbackBanner() {
   return null;
 }
 
-function GarminConnectPanel() {
-  const [userIdInput, setUserIdInput] = useState("");
+function GarminConnectPanel({ userId, playerName }: { userId: number; playerName: string }) {
   const [status, setStatus] = useState<"unknown" | "connected" | "not_connected">("unknown");
   const [message, setMessage] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const userId = userIdInput.trim() === "" ? null : Number(userIdInput);
-  const validUserId = userId !== null && !Number.isNaN(userId) ? userId : null;
-
   useEffect(() => {
-    if (validUserId === null) {
-      setStatus("unknown");
-      return;
-    }
     let cancelled = false;
-    getGarminStatus(validUserId)
+    getGarminStatus(userId)
       .then((result) => {
         if (!cancelled) setStatus(result.connected ? "connected" : "not_connected");
       })
@@ -59,14 +53,13 @@ function GarminConnectPanel() {
     return () => {
       cancelled = true;
     };
-  }, [validUserId]);
+  }, [userId]);
 
   async function handleConnect() {
-    if (validUserId === null) return;
     setBusy(true);
     setMessage(null);
     try {
-      const { authorize_url } = await startGarminAuthorize(validUserId);
+      const { authorize_url } = await startGarminAuthorize(userId);
       window.location.href = authorize_url;
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not start the Garmin connection.");
@@ -75,11 +68,10 @@ function GarminConnectPanel() {
   }
 
   async function handleDisconnect() {
-    if (validUserId === null) return;
     setBusy(true);
     setMessage(null);
     try {
-      await disconnectGarmin(validUserId);
+      await disconnectGarmin(userId);
       setStatus("not_connected");
     } catch (error) {
       setMessage(error instanceof ApiError ? error.message : "Could not disconnect Garmin.");
@@ -92,33 +84,19 @@ function GarminConnectPanel() {
     <section className="rounded-xl border p-4">
       <h2 className="text-lg font-semibold">Garmin Connect</h2>
       <p className="mt-1 text-sm text-muted-foreground">
-        Link your Garmin Connect account for automatic round sync (PRD §4.1). There&apos;s no
-        login yet, so tell us which user ID this is for.
+        Link your Garmin Connect account for automatic round sync (PRD §4.1), for{" "}
+        <strong className="text-foreground">{playerName}</strong>.
       </p>
 
-      <label className="mt-3 flex items-center gap-2 text-sm" htmlFor="garmin-user-id">
-        User ID
-        <input
-          id="garmin-user-id"
-          type="number"
-          min={1}
-          value={userIdInput}
-          onChange={(event) => setUserIdInput(event.target.value)}
-          className="w-24 rounded-md border bg-background px-2 py-1"
-        />
-      </label>
-
-      {validUserId !== null && (
-        <p className="mt-3 text-sm text-muted-foreground">
-          Status:{" "}
-          <span className="font-medium text-foreground">
-            {status === "connected" ? "Connected" : status === "not_connected" ? "Not connected" : "—"}
-          </span>
-        </p>
-      )}
+      <p className="mt-3 text-sm text-muted-foreground">
+        Status:{" "}
+        <span className="font-medium text-foreground">
+          {status === "connected" ? "Connected" : status === "not_connected" ? "Not connected" : "—"}
+        </span>
+      </p>
 
       <div className="mt-3 flex gap-2">
-        <Button type="button" onClick={handleConnect} disabled={validUserId === null || busy}>
+        <Button type="button" onClick={handleConnect} disabled={busy}>
           Connect Garmin
         </Button>
         {status === "connected" && (
@@ -138,6 +116,8 @@ function GarminConnectPanel() {
 }
 
 export default function GarminSettingsPage() {
+  const { user } = useCurrentUser();
+
   return (
     <div className="min-h-screen">
       <NavBar />
@@ -146,7 +126,11 @@ export default function GarminSettingsPage() {
         <Suspense fallback={null}>
           <CallbackBanner />
         </Suspense>
-        <GarminConnectPanel />
+        {user ? (
+          <GarminConnectPanel userId={user.id} playerName={user.name} />
+        ) : (
+          <NoPlayerSelected description="Choose a player to manage their Garmin connection." />
+        )}
       </main>
     </div>
   );

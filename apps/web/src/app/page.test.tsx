@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "./page";
 import { getRoundAnalytics, getRounds } from "@/lib/api";
 import type { RoundAnalytics, RoundSummary } from "@/lib/api";
+import { useCurrentUser } from "@/lib/current-user";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -13,16 +14,23 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/current-user", () => ({
+  useCurrentUser: vi.fn(),
+}));
+
 const mockGetRounds = vi.mocked(getRounds);
 const mockGetRoundAnalytics = vi.mocked(getRoundAnalytics);
+const mockUseCurrentUser = vi.mocked(useCurrentUser);
+
+const testUser = { id: 7, name: "Jane Doe" };
 
 const olderRound: RoundSummary = {
   id: 1, played_at: "2026-08-01T00:00:00Z", total_score: 90,
-  course_id: 1, user_id: 1, status: "verified",
+  course_id: 1, user_id: 7, status: "verified",
 };
 const recentRound: RoundSummary = {
   id: 2, played_at: "2026-08-15T00:00:00Z", total_score: 78,
-  course_id: 1, user_id: 1, status: "verified",
+  course_id: 1, user_id: 7, status: "verified",
 };
 
 const readyAnalytics: RoundAnalytics = {
@@ -43,9 +51,27 @@ const readyAnalytics: RoundAnalytics = {
 beforeEach(() => {
   mockGetRounds.mockReset();
   mockGetRoundAnalytics.mockReset();
+  mockUseCurrentUser.mockReturnValue({
+    user: testUser,
+    loading: false,
+    openPicker: vi.fn(),
+    clearUser: vi.fn(),
+  });
 });
 
 describe("DashboardPage", () => {
+  it("shows the no-player empty state when no player is chosen", () => {
+    mockUseCurrentUser.mockReturnValue({
+      user: null,
+      loading: false,
+      openPicker: vi.fn(),
+      clearUser: vi.fn(),
+    });
+    render(<DashboardPage />);
+    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+    expect(mockGetRounds).not.toHaveBeenCalled();
+  });
+
   it("shows a loading state before data arrives", () => {
     mockGetRounds.mockReturnValue(new Promise(() => {})); // never resolves
     render(<DashboardPage />);
@@ -56,6 +82,16 @@ describe("DashboardPage", () => {
     mockGetRounds.mockResolvedValue([]);
     render(<DashboardPage />);
     expect(await screen.findByText("No rounds logged yet.")).toBeInTheDocument();
+  });
+
+  it("fetches rounds scoped to the current player", async () => {
+    mockGetRounds.mockResolvedValue([recentRound]);
+    mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
+
+    render(<DashboardPage />);
+
+    await screen.findByText("Round Snapshot");
+    expect(mockGetRounds).toHaveBeenCalledWith(7);
   });
 
   it("fetches analytics for the most recently played round, not the first in the list", async () => {

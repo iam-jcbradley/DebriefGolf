@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { NavBar } from "@/components/nav-bar";
+import { NoPlayerSelected } from "@/components/no-player-selected";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,20 +10,16 @@ import { Divider } from "@/components/ui/divider";
 import { Input } from "@/components/ui/input";
 import { Overline } from "@/components/ui/overline";
 import { ApiError, deleteUserData, getUserDataExport } from "@/lib/api";
+import { useCurrentUser } from "@/lib/current-user";
 
 type ExportState = "idle" | "working" | "error";
-type DeleteState = "idle" | "confirming" | "working" | "done" | "error";
+type DeleteState = "idle" | "confirming" | "working" | "error";
 
-function DataExportPanel({ userId }: { userId: number | null }) {
+function DataExportPanel({ userId }: { userId: number }) {
   const [state, setState] = useState<ExportState>("idle");
   const [message, setMessage] = useState("");
 
   async function handleExport() {
-    if (userId === null) {
-      setState("error");
-      setMessage("Enter a user ID first.");
-      return;
-    }
     setState("working");
     try {
       const data = await getUserDataExport(userId);
@@ -66,17 +63,20 @@ function DataExportPanel({ userId }: { userId: number | null }) {
   );
 }
 
-function DeleteAccountPanel({ userId }: { userId: number | null }) {
+function DeleteAccountPanel({ userId, onDeleted }: { userId: number; onDeleted: () => void }) {
   const [state, setState] = useState<DeleteState>("idle");
   const [confirmText, setConfirmText] = useState("");
   const [message, setMessage] = useState("");
 
   async function handleDelete() {
-    if (userId === null) return;
     setState("working");
     try {
       await deleteUserData(userId);
-      setState("done");
+      // The player whose data this was just IS the current player — the
+      // parent swaps this whole panel out for a deletion confirmation and
+      // clears the persisted selection, so there's no "done" state to show
+      // here; this component simply stops being rendered.
+      onDeleted();
     } catch (error) {
       setState("error");
       setMessage(error instanceof ApiError ? error.message : "Failed to delete account.");
@@ -94,11 +94,7 @@ function DeleteAccountPanel({ userId }: { userId: number | null }) {
         </p>
       </CardHeader>
       <CardContent>
-        {state === "done" ? (
-          <p className="text-sm" role="status">
-            Your account and all associated data have been deleted.
-          </p>
-        ) : state === "confirming" || state === "working" ? (
+        {state === "confirming" || state === "working" ? (
           <div>
             <label className="flex max-w-64 flex-col gap-1 text-sm" htmlFor="delete-confirm">
               <Overline as="span">
@@ -134,12 +130,7 @@ function DeleteAccountPanel({ userId }: { userId: number | null }) {
             </div>
           </div>
         ) : (
-          <Button
-            type="button"
-            variant="destructive"
-            disabled={userId === null}
-            onClick={() => setState("confirming")}
-          >
+          <Button type="button" variant="destructive" onClick={() => setState("confirming")}>
             Delete my account
           </Button>
         )}
@@ -198,9 +189,12 @@ function PrivacyNotice() {
 }
 
 export default function PrivacySettingsPage() {
-  const [userIdInput, setUserIdInput] = useState("");
-  const userId = userIdInput.trim() === "" ? null : Number(userIdInput);
-  const validUserId = userId !== null && !Number.isNaN(userId) ? userId : null;
+  const { user, clearUser } = useCurrentUser();
+  // Deliberately independent of `user`: clearing the current player (once
+  // their account is deleted) flips `user` to null immediately, which
+  // would otherwise swap this section over to <NoPlayerSelected> before
+  // anyone could see the "your account was deleted" confirmation.
+  const [deletedPlayerName, setDeletedPlayerName] = useState<string | null>(null);
 
   return (
     <div className="min-h-screen">
@@ -212,20 +206,32 @@ export default function PrivacySettingsPage() {
         </h1>
         <SettingsTabs />
 
-        <label className="mb-6 flex max-w-40 flex-col gap-1 text-sm" htmlFor="privacy-user-id">
-          <Overline as="span">User ID</Overline>
-          <Input
-            id="privacy-user-id"
-            type="number"
-            min={1}
-            value={userIdInput}
-            onChange={(event) => setUserIdInput(event.target.value)}
-          />
-        </label>
-
-        <div className="space-y-6">
-          <DataExportPanel userId={validUserId} />
-          <DeleteAccountPanel userId={validUserId} />
+        <div className="mt-6 space-y-6">
+          {deletedPlayerName ? (
+            <Card>
+              <CardContent>
+                <p className="text-sm" role="status">
+                  {deletedPlayerName}&apos;s account and all associated data have been deleted.
+                </p>
+              </CardContent>
+            </Card>
+          ) : user ? (
+            <>
+              <p className="text-sm text-muted-foreground">
+                Managing data for <strong className="text-foreground">{user.name}</strong>.
+              </p>
+              <DataExportPanel userId={user.id} />
+              <DeleteAccountPanel
+                userId={user.id}
+                onDeleted={() => {
+                  setDeletedPlayerName(user.name);
+                  clearUser();
+                }}
+              />
+            </>
+          ) : (
+            <NoPlayerSelected description="Choose a player to manage their data." />
+          )}
         </div>
 
         <Divider />

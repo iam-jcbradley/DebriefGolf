@@ -7,6 +7,7 @@ import {
   getGarminStatus,
   startGarminAuthorize,
 } from "@/lib/api";
+import { useCurrentUser } from "@/lib/current-user";
 import GarminSettingsPage from "./page";
 
 vi.mock("next/navigation", () => ({
@@ -24,23 +25,48 @@ vi.mock("@/lib/api", async (importOriginal) => {
   };
 });
 
+vi.mock("@/lib/current-user", () => ({
+  useCurrentUser: vi.fn(),
+}));
+
 const mockStartAuthorize = vi.mocked(startGarminAuthorize);
 const mockGetStatus = vi.mocked(getGarminStatus);
 const mockDisconnect = vi.mocked(disconnectGarmin);
 const mockUseSearchParams = vi.mocked(useSearchParams);
+const mockUseCurrentUser = vi.mocked(useCurrentUser);
+
+const testUser = { id: 6, name: "Jane Doe" };
 
 beforeEach(() => {
   mockStartAuthorize.mockReset();
   mockGetStatus.mockReset();
+  mockGetStatus.mockResolvedValue({ connected: false });
   mockDisconnect.mockReset();
   mockUseSearchParams.mockReturnValue(new URLSearchParams() as ReturnType<typeof useSearchParams>);
+  mockUseCurrentUser.mockReturnValue({
+    user: testUser,
+    loading: false,
+    openPicker: vi.fn(),
+    clearUser: vi.fn(),
+  });
 });
 
 describe("GarminSettingsPage", () => {
-  it("renders the connect panel with a user id input", () => {
+  it("shows the no-player empty state when no player is chosen", () => {
+    mockUseCurrentUser.mockReturnValue({
+      user: null,
+      loading: false,
+      openPicker: vi.fn(),
+      clearUser: vi.fn(),
+    });
+    render(<GarminSettingsPage />);
+    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+  });
+
+  it("renders the connect panel for the current player", () => {
     render(<GarminSettingsPage />);
     expect(screen.getByRole("heading", { name: "Garmin Connect" })).toBeInTheDocument();
-    expect(screen.getByLabelText("User ID")).toBeInTheDocument();
+    expect(screen.getByText("Jane Doe")).toBeInTheDocument();
   });
 
   it("shows a connected-success banner when redirected back with ?connected=1", () => {
@@ -59,12 +85,10 @@ describe("GarminSettingsPage", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("access_denied");
   });
 
-  it("fetches and displays connection status once a user id is entered", async () => {
+  it("fetches and displays connection status for the current player", async () => {
     mockGetStatus.mockResolvedValue({ connected: true });
-    const user = userEvent.setup();
 
     render(<GarminSettingsPage />);
-    await user.type(screen.getByLabelText("User ID"), "6");
 
     expect(await screen.findByText("Connected")).toBeInTheDocument();
     expect(mockGetStatus).toHaveBeenCalledWith(6);
@@ -72,12 +96,9 @@ describe("GarminSettingsPage", () => {
 
   it("shows a Disconnect button only once connected", async () => {
     mockGetStatus.mockResolvedValue({ connected: true });
-    const user = userEvent.setup();
 
     render(<GarminSettingsPage />);
-    expect(screen.queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
 
-    await user.type(screen.getByLabelText("User ID"), "6");
     expect(await screen.findByRole("button", { name: "Disconnect" })).toBeInTheDocument();
   });
 
@@ -87,7 +108,7 @@ describe("GarminSettingsPage", () => {
     const user = userEvent.setup();
 
     render(<GarminSettingsPage />);
-    await user.type(screen.getByLabelText("User ID"), "6");
+    await screen.findByText("Not connected");
     await user.click(screen.getByRole("button", { name: "Connect Garmin" }));
 
     expect(mockStartAuthorize).toHaveBeenCalledWith(6);
@@ -99,15 +120,9 @@ describe("GarminSettingsPage", () => {
     const user = userEvent.setup();
 
     render(<GarminSettingsPage />);
-    await user.type(screen.getByLabelText("User ID"), "6");
     await user.click(await screen.findByRole("button", { name: "Disconnect" }));
 
     expect(mockDisconnect).toHaveBeenCalledWith(6);
     expect(await screen.findByText("Not connected")).toBeInTheDocument();
-  });
-
-  it("disables Connect Garmin until a user id is entered", () => {
-    render(<GarminSettingsPage />);
-    expect(screen.getByRole("button", { name: "Connect Garmin" })).toBeDisabled();
   });
 });

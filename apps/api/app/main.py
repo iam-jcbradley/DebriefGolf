@@ -8,6 +8,7 @@ from app.api.routes.health import router as health_router
 from app.api.routes.practice import router as practice_router
 from app.api.routes.privacy import router as privacy_router
 from app.api.routes.rounds import router as rounds_router
+from app.api.routes.users import router as users_router
 from app.api.routes.virtual_rounds import router as virtual_rounds_router
 from app.core.config import settings
 
@@ -28,3 +29,4 @@ app.include_router(garmin_auth_router, prefix="/api")
 app.include_router(practice_router, prefix="/api")
 app.include_router(virtual_rounds_router, prefix="/api")
 app.include_router(privacy_router, prefix="/api")
+app.include_router(users_router, prefix="/api")

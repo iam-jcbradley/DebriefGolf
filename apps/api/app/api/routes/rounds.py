@@ -21,8 +21,18 @@ router = APIRouter()
 
 
 @router.get("/rounds")
-def list_rounds(session: Annotated[Session, Depends(get_session)]) -> list[Round]:
-    return list(session.exec(select(Round)).all())
+def list_rounds(
+    session: Annotated[Session, Depends(get_session)], user_id: int | None = None
+) -> list[Round]:
+    """`user_id` is optional only for backward compatibility with any
+    existing caller that wants every round in the database; the frontend
+    dashboard always passes it — an unfiltered list is exactly what let it
+    pick a *different* user's most recent round before player identity
+    was persisted (see `src/lib/use-dashboard-data.ts`)."""
+    query = select(Round)
+    if user_id is not None:
+        query = query.where(Round.user_id == user_id)
+    return list(session.exec(query).all())
 
 
 class RoundCreateIn(BaseModel):

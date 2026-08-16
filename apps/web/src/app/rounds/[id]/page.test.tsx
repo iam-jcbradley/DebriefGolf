@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useParams } from "next/navigation";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ import {
   type RoundSummary,
   type SmartBag,
 } from "@/lib/api";
+import { renderWithProviders as render } from "@/lib/test-utils";
 import RoundDetailPage from "./page";
 
 vi.mock("mapbox-gl/dist/mapbox-gl.css", () => ({}));

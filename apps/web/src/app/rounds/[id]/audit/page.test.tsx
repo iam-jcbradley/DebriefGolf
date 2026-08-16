@@ -1,8 +1,9 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useParams } from "next/navigation";
 import { IDBFactory } from "fake-indexeddb";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { renderWithProviders as render } from "@/lib/test-utils";
 import RoundAuditPage from "./page";
 
 vi.mock("next/navigation", () => ({

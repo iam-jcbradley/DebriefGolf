@@ -296,8 +296,10 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function getRounds(): Promise<RoundSummary[]> {
-  return apiFetch<RoundSummary[]>("/api/rounds");
+export function getRounds(userId?: number): Promise<RoundSummary[]> {
+  return apiFetch<RoundSummary[]>(
+    userId === undefined ? "/api/rounds" : `/api/rounds?user_id=${userId}`
+  );
 }
 
 export function getRoundAnalytics(roundId: number): Promise<RoundAnalyticsResponse> {
@@ -545,6 +547,43 @@ export interface DeleteUserResult {
 
 export function deleteUserData(userId: number): Promise<DeleteUserResult> {
   return apiFetch<DeleteUserResult>(`/api/users/${userId}`, { method: "DELETE" });
+}
+
+// --- User identity (name-based player picker, persisted client-side —
+// see src/lib/current-user.tsx) ---
+
+export interface UserProfile {
+  id: number;
+  email: string;
+  name: string;
+  handicap_index: number;
+  created_at: string;
+}
+
+export interface UserSummary {
+  id: number;
+  name: string;
+}
+
+export interface UserCreateInput {
+  name: string;
+  email: string;
+}
+
+export function createUser(payload: UserCreateInput): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function searchUsers(query: string): Promise<UserSummary[]> {
+  return apiFetch<UserSummary[]>(`/api/users?q=${encodeURIComponent(query)}`);
+}
+
+export function getUserProfile(userId: number): Promise<UserProfile> {
+  return apiFetch<UserProfile>(`/api/users/${userId}`);
 }
 
 export { API_URL };
