@@ -10,7 +10,12 @@ Usage:
     python main.py export SCORECARD_ID
     python main.py shots SCORECARD_ID [--holes 1,2,3]
     python main.py download-fit ACTIVITY_ID
-    python main.py upload FIT_PATH --user-id N [--api-url URL]
+    python main.py upload FIT_PATH [--api-url URL]
+    python main.py import-scorecard SCORECARD_ID [--api-url URL]
+
+`upload` and `import-scorecard` authenticate against DebriefGolf's own API
+with a real account (DEBRIEFGOLF_EMAIL / DEBRIEFGOLF_PASSWORD in .env) —
+identity there comes from a signed session cookie, not a user-id parameter.
 """
 
 from __future__ import annotations
@@ -21,10 +26,11 @@ import os
 import sys
 from pathlib import Path
 
-import requests
 from dotenv import load_dotenv
 
+from debriefgolf_api import DebriefGolfApiError, DebriefGolfClient
 from garmin_client import GarminImportClient, GarminImportError, MfaRequiredError
+from scorecard_mapper import ScorecardMappingError, map_course_payload, map_round_payload
 
 DEFAULT_TOKENSTORE = Path(__file__).parent / ".garmin_tokens"
 DEFAULT_OUTPUT_DIR = Path(__file__).parent / "output"
@@ -43,6 +49,26 @@ def _build_client() -> GarminImportClient:
         sys.exit(1)
     DEFAULT_TOKENSTORE.mkdir(parents=True, exist_ok=True)
     return GarminImportClient(email, password, DEFAULT_TOKENSTORE)
+
+
+def _build_debriefgolf_client(api_url: str) -> DebriefGolfClient:
+    email = os.getenv("DEBRIEFGOLF_EMAIL")
+    password = os.getenv("DEBRIEFGOLF_PASSWORD")
+    if not email or not password:
+        print(
+            "DEBRIEFGOLF_EMAIL / DEBRIEFGOLF_PASSWORD not set — copy .env.example to .env "
+            "and fill them in with a real DebriefGolf account (identity comes from a "
+            "session cookie now, not a user-id parameter).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    client = DebriefGolfClient(api_url)
+    try:
+        client.login(email, password)
+    except DebriefGolfApiError as exc:
+        print(f"DebriefGolf login failed: {exc}", file=sys.stderr)
+        sys.exit(1)
+    return client
 
 
 def _login_with_mfa_prompt(client: GarminImportClient) -> None:
@@ -120,7 +146,7 @@ def cmd_download_fit(args: argparse.Namespace) -> None:
         print(f"Failed to download activity {args.activity_id}: {exc}", file=sys.stderr)
         sys.exit(1)
     print(f"Saved {fit_path}")
-    print(f"Upload it to DebriefGolf with: python main.py upload {fit_path} --user-id <N>")
+    print(f"Upload it to DebriefGolf with: python main.py upload {fit_path}")
 
 
 def cmd_upload(args: argparse.Namespace) -> None:
@@ -129,15 +155,59 @@ def cmd_upload(args: argparse.Namespace) -> None:
         print(f"File not found: {fit_path}", file=sys.stderr)
         sys.exit(1)
 
-    url = f"{args.api_url.rstrip('/')}/api/rounds/upload?user_id={args.user_id}"
-    with fit_path.open("rb") as f:
-        response = requests.post(url, files={"file": (fit_path.name, f)}, timeout=30)
-
-    if not response.ok:
-        print(f"Upload failed ({response.status_code}): {response.text}", file=sys.stderr)
+    client = _build_debriefgolf_client(args.api_url)
+    try:
+        result = client.upload_fit(fit_path)
+    except DebriefGolfApiError as exc:
+        print(str(exc), file=sys.stderr)
         sys.exit(1)
 
-    print(f"Uploaded — {response.json()}")
+    print(f"Uploaded — {result}")
+
+
+def cmd_import_scorecard(args: argparse.Namespace) -> None:
+    garmin = _build_client()
+    _login_with_mfa_prompt(garmin)
+    try:
+        detail = garmin.get_scorecard(args.scorecard_id)
+    except GarminImportError as exc:
+        print(f"Failed to fetch scorecard {args.scorecard_id}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        course_payload = map_course_payload(detail)
+        # course_id filled in below, once we know it — everything else in the
+        # round payload is mappable now, so validate it before touching the
+        # API rather than risk creating a course and then failing.
+        round_payload = map_round_payload(detail, course_id=None)
+    except ScorecardMappingError as exc:
+        print(f"Could not map scorecard {args.scorecard_id}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    debrief = _build_debriefgolf_client(args.api_url)
+    try:
+        existing = debrief.find_course_by_name(course_payload["name"])
+        if existing:
+            course = existing
+            print(f"Reusing existing course: {course['name']} (id={course['id']})")
+        else:
+            course = debrief.create_course(course_payload)
+            print(f"Created course: {course['name']} (id={course['id']})")
+            print(
+                "  Hole yardages are unknown (Garmin's scorecard JSON doesn't include "
+                "them) — set to 0. Fill them in via the course editor."
+            )
+
+        round_payload["course_id"] = course["id"]
+        round_ = debrief.create_round(round_payload)
+        print(f"Created round: id={round_['id']}, status={round_['status']}")
+        print(
+            "  No shots attached — status is 'needs_audit'. Pair with an uploaded .FIT "
+            "for the same round (see 'download-fit' + 'upload') to get shot-level data."
+        )
+    except DebriefGolfApiError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(1)
 
 
 def main() -> None:
@@ -174,9 +244,16 @@ def main() -> None:
         "upload", help="Upload a downloaded .FIT file to a running DebriefGolf API"
     )
     upload_parser.add_argument("fit_path")
-    upload_parser.add_argument("--user-id", type=int, required=True)
     upload_parser.add_argument("--api-url", default=DEFAULT_API_URL)
     upload_parser.set_defaults(func=cmd_upload)
+
+    import_parser = subparsers.add_parser(
+        "import-scorecard",
+        help="Import a scorecard's score/course metadata into DebriefGolf (no shots)",
+    )
+    import_parser.add_argument("scorecard_id")
+    import_parser.add_argument("--api-url", default=DEFAULT_API_URL)
+    import_parser.set_defaults(func=cmd_import_scorecard)
 
     args = parser.parse_args()
     args.func(args)
