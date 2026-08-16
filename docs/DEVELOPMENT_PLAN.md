@@ -676,7 +676,7 @@ actual signal rather than ship speculatively.
 Phases 15, 16 and 17 remain independent of each other and can be reordered
 freely.
 
-## Phase 14 — Per-Round Pin Positions & True Short-Siding
+## Phase 14 — Per-Round Pin Positions & True Short-Siding (done, with noted gaps)
 
 Goal: the oldest unpaid debt in this document, and — per the first review —
 the only phase in this Part with direct, visible product value, which is
@@ -724,94 +724,149 @@ for whoever implements it to guess:
   preference — see the new Backlog item) are explicitly not in this
   phase.**
 
-- [ ] **Schema: a per-round, per-hole pin position.** Deliberately not a
-  column on `Hole` — that table is shared reference geometry across every
-  user's rounds, and a pin is a property of one round on one day. A
-  `RoundHolePin` table, matching the discipline this session already put on
-  `Shot`: `UniqueConstraint("round_id", "hole_id")` (one pin per hole per
-  round — a second placement replaces it, the way a resubmitted shot does,
-  not a second row), `round_id` cascades on delete, `hole_id` does not
-  (`Hole` is shared reference geometry, not this row's to own — same comment
-  `Shot.hole_id` already carries). Same reasoning that keeps `VirtualRound`
-  separate from `Round`: make the wrong query impossible to write rather
-  than remember a filter.
-- [ ] **A real, specified short-siding rule** in `app/services/approach.py`,
-  not the hand-wave "angle and distance relative to the pin" the previous
-  draft left as the whole specification. Concretely: given the pin, the
-  green boundary polygon, and the miss point, take the line through the pin
-  along the shot's approach bearing; measure how much green lies beyond the
-  pin on the miss's side of that line versus the opposite side. Short-sided
-  when the miss's side has substantially less green to work with than the
-  other side — the golf-instruction definition (little green between ball
-  and pin, versus "long-sided" with plenty of green to work with). The exact
-  threshold is this implementation's own calibration, not a licensed or
-  validated number — same caveat this document already carries for
-  `SCRATCH_CURVES` and `EXPECTED_SMASH_FACTOR_BY_IRON` — and should be
-  named as such in the module docstring, not presented as settled.
-- [ ] **A third state the previous draft's two-value `pin_source` missed:
-  pin recorded, but no green boundary to measure against.**
-  `osm_courses.py` sets `green_boundary = None` whenever OSM didn't have
-  usable green polygon data for a hole (`green_points is None or len(...) <
-  3`) — coverage is inconsistent by Phase 5's own admission, so this isn't
-  rare. The response reports two independent booleans, `has_pin` and
-  `has_green_boundary`, rather than a single enum trying to cover three
-  states in two values; the geometric rule above only runs when both are
-  true, and the existing distance/lie proxy is the fallback whenever either
-  is missing — same proxy, same tests, one condition instead of two.
-- [ ] **Wire `is_within_ellipse` to real pins** — Phase 4 built and tested it
-  for exactly this and noted it "isn't wired up yet". "Is today's tucked pin
-  inside my dispersion pattern" is the actual sucker-pin question.
-- [ ] **Aim line targets the pin, not the green center**, in both UI render
-  sites, named explicitly rather than assuming the shared-math fix covers
-  them: `HoleReplaySvg`'s aim line (currently a hardcoded `teePoint ->
-  greenPoint`, per its own source) and the equivalent Mapbox layer.
-  `geometry.py` and `hole-replay/projection.ts` staying in sync as the same
-  math mirror pair this repo already warns about is necessary but not
-  sufficient — both renderers have to actually be updated to use the new
-  endpoint, which the mirror-file warning alone doesn't guarantee.
-- [ ] **A pin-placement mode on manual entry's existing map, not a second
-  meaning silently overloaded onto the current one.** `HoleReplaySvg`'s and
-  `HoleReplayMap`'s `onPick` is a bare `(latlng) => void` today — one click,
-  one meaning, wired 1:1 to "set this shot's location"
-  (`manual-entry/hole-shot-entry.tsx`). Adding pin capture needs an actual
-  mode toggle (a labeled "Set today's pin" control, a distinct marker/cursor
-  from shot placement), threaded as real state, not an unlabeled second use
-  of the same click. Saved the same way shots already are — held in the
-  same client-side draft as the hole's shots and submitted with them, not a
-  separate immediate API call — since no pin endpoint exists yet and this
-  matches how manual entry already handles "the user might abandon this
-  screen before submitting."
-- [ ] **Report `has_pin`/`has_green_boundary` in the analytics response, and
+- [x] **Schema: a per-round, per-hole pin position.** `RoundHolePin`
+  (`app/models/round_hole_pin.py`), not a column on `Hole` — that table is
+  shared reference geometry across every user's rounds, and a pin is a
+  property of one round on one day, the same reasoning that keeps
+  `VirtualRound` separate from `Round`. `UniqueConstraint("round_id",
+  "hole_id", name="uq_pin_round_hole")` (one pin per hole per round — a
+  second placement replaces it, the way a resubmitted shot does, not a
+  second row), `round_id` cascades on delete, `hole_id` does not (`Hole` is
+  shared reference geometry, not this row's to own — same comment
+  `Shot.hole_id` already carries). Migration `cfdf38640868` verified up,
+  down and up against a real local Postgres 16 + PostGIS instance
+  (`postgresql-16-postgis-3` via `apt`, this sandbox's Docker registry
+  still being blocked); `\d round_hole_pin` confirms a single GIST index
+  (autogenerate's redundant `op.create_index` removed, per this repo's own
+  documented caveat) and the two FK cascade behaviors. The unique
+  constraint was exercised directly at the SQL level, not just through the
+  API: a second `INSERT` for the same `(round_id, hole_id)` inside the same
+  transaction raises `duplicate key value violates unique constraint
+  "uq_pin_round_hole"`, as intended.
+- [x] **A real, specified short-siding rule** in `app/services/approach.py`.
+  Given the pin, the green boundary polygon, and the miss point: take the
+  line through the pin along the shot's approach bearing, measure how much
+  green lies beyond the pin on the miss's side of that line
+  (`green_extent_beyond_point()`, `app/services/geometry.py`) versus the
+  opposite side, and call it short-sided when the miss's side has
+  substantially less green to work with — the golf-instruction definition,
+  not a fixed distance. `SHORT_SIDE_GREEN_RATIO = 0.5` is this
+  implementation's own calibration, named as such in the module docstring
+  (same caveat as `SCRATCH_CURVES` and `EXPECTED_SMASH_FACTOR_BY_IRON`), not
+  a licensed number.
+- [x] **A third state the previous draft's two-value `pin_source` missed:
+  pin recorded, but no green boundary to measure against.** The response
+  reports two independent booleans, `has_pin` and `has_green_boundary`
+  (`GET /rounds/{id}/analytics` and `GET /rounds/{id}/holes/{n}/replay`),
+  rather than a single enum trying to cover three states in two values; the
+  geometric rule only runs when both are true, and the existing
+  distance/lie proxy is the fallback whenever either is missing.
+- [x] **Wired `is_within_ellipse` to real pins — client-side, not on the
+  backend.** The ellipse itself already comes from `GET /bag`, and
+  `rounds/[id]/page.tsx` already stitches hole replay + Smart Bag together
+  in the browser to anchor it (`ellipseAnchorYards`); adding a second
+  backend round-trip just to re-fetch the same bag data would have
+  duplicated that wiring, not simplified it. `is_within_ellipse` is mirrored
+  in `lib/hole-replay/dispersion.ts` (same math, same test cases ported
+  from `test_dispersion.py`) — a second math mirror pair alongside
+  `geometry.py` ↔ `projection.ts`, flagged here so it doesn't drift
+  unnoticed the way that pair's own warning exists to prevent. A new
+  `SuckerPinAlert` (`--status-warning`, not the short-sided banner's
+  `--status-critical` — this is a before-the-shot risk flag, not a report of
+  a bad outcome) renders when today's pin falls inside the approach club's
+  dispersion ellipse.
+- [x] **Aim line targets the pin, not the green center**, in both UI render
+  sites: `HoleReplaySvg` (falls back to `green_center` when no pin is
+  recorded, and now renders a distinct flag marker at the pin) and
+  `HoleReplayMap`'s Mapbox layer (a third marker color, `#c9a227`, alongside
+  the existing tee/green/shot markers).
+- [x] **A pin-placement mode on manual entry's existing map.**
+  `HoleShotEntry` gained a `mode: "shot" | "pin"` toggle (a labeled "Set
+  today's pin" control) and an `onSetPin` prop, threaded as real state
+  rather than a second meaning silently overloaded onto the existing
+  `onPick`. **Deviates from the original plan on one point, deliberately:**
+  the plan called for holding the pin in the same client-side draft as the
+  hole's shots and submitting it with them, reasoning that "no pin endpoint
+  exists yet." That premise stopped being true partway through this phase —
+  `POST /rounds/{id}/pins/bulk` was built for the API item above — so a pin
+  placement now saves immediately, the same idempotent
+  existing-pin-gets-replaced pattern `POST /shots/bulk` already established.
+  This is simpler than threading a second draft type through
+  `use-audit-draft`, and arguably safer (a pin persists the moment it's
+  placed rather than only if the player finishes and submits the whole
+  round) — recorded here since the plan's stated reasoning for the
+  original choice no longer held once the endpoint existed.
+- [x] **Report `has_pin`/`has_green_boundary` in the analytics response, and
   render the muted provenance line described above** whenever either is
-  false — visibly, not just in the API. An API field nobody reads isn't
-  disclosure, which was the whole finding that produced this item in the
-  first place.
+  false. `PinProvenanceNote` (`text-muted-foreground`, not the banner's
+  `--status-critical`) renders on the hole replay page reading "Based on
+  green center — no pin recorded" (no pin) or "Based on distance — no green
+  boundary recorded" (pin but no boundary — the third state above), and
+  disappears once both are true.
 
 **Not in this phase, on purpose:** pin capture inside the audit wizard (needs
 a map/location UI added there first, which doesn't exist); short-siding rate
 aggregated as a trend over time (a natural follow-on, not this phase's job);
-live, in-round pin capture at the moment of play (see the new Backlog item).
+live, in-round pin capture at the moment of play (see the Backlog item).
 
 **Acceptance criteria:** a hand-computed short-siding case per quadrant (pin
 tucked left with a miss left, same pin with a miss right, etc.) computed
-against a real pin and asserted exactly — *and*, learning from Phase 4's own
-ellipse-anchoring bug, which passed every synthetic unit case and was only
-caught by a real visual pass against real data: the new rule also run
-against the seeded demo round's actual shots and checked by eye, not just
-asserted against hand-built cases. The existing proxy tests still pass, now
+against a real pin and asserted exactly — `test_approach.py`'s
+`TestGeometricRule` — *and*, learning from Phase 4's own ellipse-anchoring
+bug, which passed every synthetic unit case and was only caught by a real
+visual pass against real data: the new rule was also run against the seeded
+demo round's actual shots, not just hand-built cases. This caught something
+real: hole 7's scripted narrative ("heel/push-slice into a short-sided
+bunker," the PRD §8 mockup example verbatim) actually computes as
+`safe_leave` under the pre-Phase-14 proxy — the shot ends 12y from the pin,
+past the 10y `SHORT_SIDE_PROXIMITY_YARDS` threshold, so the demo data's own
+narrative comment has been slightly wrong since Phase 2. Placing a real pin
+on the miss's side of that green via `POST /pins/bulk` and re-fetching the
+hole replay flipped the verdict to `short_sided`, as the golf actually
+calls for; placing the same pin on the opposite side correctly gave
+`safe_leave`. (The proxy's threshold isn't being changed — it's a
+documented, unvalidated calibration and out of this phase's scope — but the
+mismatch is worth knowing about.) The existing proxy tests still pass, now
 covering both fallback conditions (no pin, and pin-but-no-boundary). A test
 that every existing round (which has neither `has_pin` nor, for some holes,
 `has_green_boundary`) round-trips through the correct fallback and renders
 the muted provenance line, styled with `text-muted-foreground` and not the
-banner's `--status-critical`. Migration verified up, down and up against a
-real PostGIS instance, including the new unique constraint rejecting a
-second pin for the same round/hole. A real-browser pass placing a pin in
-manual entry and seeing both the aim line move and the short-sided verdict
-change — the same manual-verification bar Phases 4, 5 and 6 each held
-themselves to. The Mapbox-layer half of that pass is subject to this
-sandbox's standing Mapbox verification limit (`CLAUDE.md`); state that
-plainly rather than silently skip it, the same convention `garmin_oauth.py`
-and `osm_courses.py` already follow.
+banner's `--status-critical`, verified both in `vitest` and in a real
+browser screenshot. Migration verified up, down and up against a real
+PostGIS instance, including the unique constraint rejecting a second pin
+for the same round/hole at the raw SQL level. A real-browser Playwright
+pass (Chromium, this sandbox's pre-installed browser) logged into the
+seeded demo account, switched manual entry to pin mode, clicked the hole 7
+map, and confirmed both the pin marker appeared and the aim line's SVG
+endpoint moved to it; a second pass on the round detail page confirmed the
+provenance note appears/disappears correctly across holes with and without
+a recorded pin. **The Mapbox-layer half of that pass is unverified in this
+sandbox** — no `NEXT_PUBLIC_MAPBOX_TOKEN` is configured here, the same
+standing limit `garmin_oauth.py` and `osm_courses.py` already document;
+`HoleReplayMap` falls back to the SVG schematic whenever no token is
+present, which is what the browser pass above actually exercised. 369
+backend tests (up from 362: `TestGreenExtentBeyondPoint`,
+`TestGeometricRule`, `TestCreatePinsBulk`, and the hole-replay/analytics
+pin-provenance cases), ruff clean, pyright clean (0 errors, 118 warnings —
+up from 101, all in the same pre-existing demoted categories, no new
+category introduced). 332 frontend tests (up from 310), `tsc --noEmit`
+clean, eslint clean.
+
+**Gaps carried forward:**
+- **The Mapbox-layer aim line/pin marker is implemented but unverified in a
+  real browser**, per the standing Mapbox token limit above — only its
+  props/marker-call wiring is covered by `hole-replay-map.test.tsx`'s mocked
+  `mapbox-gl`.
+- **Hole 7's seed narrative comment is now slightly inaccurate** (says
+  "short-sided," proxy-classifies as `safe_leave` without a pin) — a
+  one-line comment fix, not a behavior bug, left for whoever next touches
+  `app/db/seed.py` rather than bundled into this phase's diff.
+- **`SHORT_SIDE_GREEN_RATIO = 0.5` is still unvalidated calibration**, as
+  documented in `approach.py` — the acceptance-criteria pass checked that it
+  produces sensible, side-correct verdicts on real geometry, not that 0.5
+  specifically is the right cutoff.
+- Audit-wizard pin capture, short-siding trend-over-time, and live in-round
+  pin capture remain explicitly out of scope — see Backlog.
 
 ## Phase 15 — Password Reset & Account Recovery
 
