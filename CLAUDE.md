@@ -90,6 +90,13 @@ Run it:
 Don't run it for routine fixes or small edits — it's the expensive path,
 reserved for decisions that are costly to get wrong and cheap to catch here.
 
+**The QA seat's findings get recorded in `docs/KNOWN_ISSUES.md`**, whether or
+not they get fixed in the same pass — a real bug or drift risk found and not
+written down gets rediscovered from scratch next time. It's also a fine
+standalone QA pass to run on its own, not just as part of the five-agent
+panel, when you want a general health check rather than a review of one
+specific plan or diff.
+
 ## Things that will bite you
 
 **Never return `select(Shot)` (or any model with a geometry column) as JSON.**
