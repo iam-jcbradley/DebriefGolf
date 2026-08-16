@@ -171,6 +171,110 @@ class TestCreateShotsBulk:
         shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
         assert len(shots) == 2
 
+    def test_resubmitting_the_same_shot_does_not_duplicate_it(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        """Regression test: this used to be purely additive, so a retried
+        submit (e.g. a dropped connection after the write actually
+        succeeded) silently duplicated a hole's shots."""
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+        shot_payload = {
+            "shots": [
+                {
+                    "hole_number": 1,
+                    "shot_number": 1,
+                    "club": "Driver",
+                    "start_lie": "tee",
+                    "end_lie": "fairway",
+                    "start_distance_yards": 400,
+                    "end_distance_yards": 150,
+                }
+            ]
+        }
+
+        first = auth_client.post(f"/api/rounds/{round_id}/shots/bulk", json=shot_payload)
+        second = auth_client.post(f"/api/rounds/{round_id}/shots/bulk", json=shot_payload)
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        # Same shot id back both times — the second call didn't create a
+        # new row, it found the one from the first call.
+        assert first.json()[0]["id"] == second.json()[0]["id"]
+
+        shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
+        assert len(shots) == 1
+
+    def test_duplicate_shot_within_one_payload_does_not_duplicate_it(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        """Same guard, but both copies arrive in a single request rather
+        than two separate ones."""
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+        one_shot = {
+            "hole_number": 1,
+            "shot_number": 1,
+            "club": "Driver",
+            "start_lie": "tee",
+            "end_lie": "fairway",
+            "start_distance_yards": 400,
+            "end_distance_yards": 150,
+        }
+
+        response = auth_client.post(
+            f"/api/rounds/{round_id}/shots/bulk", json={"shots": [one_shot, one_shot]}
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert len(body) == 2
+        assert body[0]["id"] == body[1]["id"]
+
+        shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
+        assert len(shots) == 1
+
+    def test_a_second_hole_can_still_be_added_after_the_first(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        """Not everything through this endpoint is a retry — the manual
+        entry flow calls it once per hole as the round is played, and those
+        calls must keep accumulating shots normally."""
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+        auth_client.post(
+            f"/api/rounds/{round_id}/shots/bulk",
+            json={
+                "shots": [
+                    {
+                        "hole_number": 1,
+                        "shot_number": 1,
+                        "start_lie": "tee",
+                        "end_lie": "fairway",
+                        "start_distance_yards": 400,
+                        "end_distance_yards": 150,
+                    }
+                ]
+            },
+        )
+
+        response = auth_client.post(
+            f"/api/rounds/{round_id}/shots/bulk",
+            json={
+                "shots": [
+                    {
+                        "hole_number": 2,
+                        "shot_number": 1,
+                        "start_lie": "tee",
+                        "end_lie": "green",
+                        "start_distance_yards": 175,
+                        "end_distance_yards": 6,
+                    }
+                ]
+            },
+        )
+
+        assert response.status_code == 201
+        shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
+        assert len(shots) == 2
+
     def test_persists_strokes_gained_when_shots_are_recorded(
         self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:

@@ -636,12 +636,23 @@ jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
 
 ## Backlog (not yet scheduled into a phase)
 
-- `get_round_analytics` does `holes[shot.hole_id]` against a dict built only
-  from the round's *current* course — a shot whose hole belongs to a
-  since-changed course raises `KeyError` and returns a 500 where a 409 is meant.
-- `create_shots_bulk` is documented as purely additive with no edit path, so a
-  double-submit from a flaky network silently duplicates a hole's shots. Needs
-  an idempotency key or a `(round_id, hole_id, shot_number)` uniqueness rule.
+- ~~`get_round_analytics` does `holes[shot.hole_id]` against a dict built only
+  from the round's *current* course...~~ **Fixed.** A course reassignment
+  after shots were recorded now raises a deliberate 409
+  (`test_analytics_endpoint_409_when_course_reassigned_after_shots_recorded`)
+  instead of an unhandled `KeyError` — the exact scenario
+  `_persist_round_strokes_gained` already no-op'd on rather than crashed for.
+- ~~`create_shots_bulk` is documented as purely additive with no edit path...~~
+  **Fixed.** `Shot` now has a `UniqueConstraint("round_id", "hole_id",
+  "shot_number")` (migration `da7ddd5e0023`) — a hole's shot 1, shot 2, ...
+  is a natural key, not just a dedup mechanism. The route checks for an
+  existing match before inserting and returns it instead of erroring or
+  duplicating, so a retried submit (dropped connection after the write
+  actually landed) is safe; a genuinely new hole's shots still accumulate
+  normally. Both directions covered:
+  `test_resubmitting_the_same_shot_does_not_duplicate_it`,
+  `test_duplicate_shot_within_one_payload_does_not_duplicate_it`,
+  `test_a_second_hole_can_still_be_added_after_the_first`.
 - No merge/rename flow for near-duplicate players (carried from Phase 8).
 
 ## Cross-cutting (ongoing, not a single phase)
