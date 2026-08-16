@@ -14,20 +14,6 @@ deleted, so the history of what broke and why is still here later.
 
 ## Open
 
-- **`GET /practice/combines` can never recommend the Driver Dispersion
-  combine.** `apps/api/app/api/routes/practice.py`'s `_on_course_club_gapping`
-  calls `compute_club_gapping(distances_by_club)` with no `lateral_by_club`
-  argument — unlike its sibling in `bag.py::get_smart_bag`, which does the
-  extra tee/green/shot-location join and passes `lateral_by_club=`. Because
-  the practice-route copy skips that join, every `ClubGappingStats.lateral`
-  it produces is `None`, so `driver_lateral_stdev` is always `None`, so
-  `detect_driver_dispersion_weakness(None)` always returns `None` —
-  regardless of how wide a player's actual driver dispersion is. PRD
-  §7.1's "30-Yard Corridor Test" combine is dead code in production, and
-  nothing currently fails to reveal it: the existing tests only unit-test
-  the pure detector function, never the route's wiring from real GPS data
-  to it. *Found by: QA panel gut-check, 2026-08-16.*
-
 - **Stale service-layer README.** `apps/api/app/services/README.md` — the
   file `CLAUDE.md` explicitly points readers to first ("See
   `app/services/README.md` for what each module does and which phase built
@@ -37,15 +23,6 @@ deleted, so the history of what broke and why is still here later.
   claims combine matching and the coach lesson brief export are "not yet
   implemented," though both shipped and were touched again through Phase 14.
   *Found by: QA panel gut-check, 2026-08-16.*
-
-- **`ruff check .` fails on `apps/api`.** 4 errors, all in
-  `scripts/benchmark.py` (an unsorted import block, three `E501`
-  line-too-long violations) — broken since the file was added in Phase 11.
-  `DEVELOPMENT_PLAN.md` claims "ruff clean" as acceptance criteria for
-  Phases 11 through 14; pyright genuinely is clean, so this looks like
-  `scripts/` quietly falling outside whatever check actually ran before
-  that got written down, not a doc-vs-code judgment call. *Found by: QA
-  panel gut-check, 2026-08-16.*
 
 - **Mapbox hole-replay markers hardcode hex colors that violate the style
   guide.** `apps/web/src/components/hole-replay/hole-replay-map.tsx:75-121`
@@ -75,4 +52,41 @@ deleted, so the history of what broke and why is still here later.
 
 ## Fixed
 
-_None yet._
+- ~~**`GET /practice/combines` can never recommend the Driver Dispersion
+  combine.** `apps/api/app/api/routes/practice.py`'s `_on_course_club_gapping`
+  called `compute_club_gapping(distances_by_club)` with no `lateral_by_club`
+  argument — unlike its sibling in `bag.py::get_smart_bag`, which does the
+  extra tee/green/shot-location join and passes `lateral_by_club=`. Because
+  the practice-route copy skipped that join, every `ClubGappingStats.lateral`
+  it produced was `None`, so `driver_lateral_stdev` was always `None`, so
+  `detect_driver_dispersion_weakness(None)` always returned `None` —
+  regardless of how wide a player's actual driver dispersion was. PRD
+  §7.1's "30-Yard Corridor Test" combine was dead code in production, and
+  nothing failed to reveal it: the existing tests only unit-tested the pure
+  detector function, never the route's wiring from real GPS data to it.~~
+  **Fixed.** Extracted the shared query+compute logic
+  (`app/api/routes/_shot_queries.py`: `fetch_on_course_shots`,
+  `fetch_shot_geometry_rows`, `club_gapping_with_lateral`) so `bag.py` and
+  `practice.py` call the same function instead of maintaining independent
+  copies — the exact fix for a duplicated-helper drift the QA lens exists
+  to catch. `get_delivery_profile`'s Sim vs. Real-World gapping delta keeps
+  a separate, deliberately lighter carry-only path
+  (`_carry_only_club_gapping`) since it never reads `.lateral` and doesn't
+  need the extra geometry join. Regression test:
+  `test_practice_routes.py::TestPracticeCombinesEndpoint::test_flags_driver_dispersion_weakness_from_real_gps_lateral_spread`
+  seeds real GPS-located driver shots with a lateral spread (pstdev ~21y)
+  above the 15y threshold — confirmed to fail against the pre-fix code and
+  pass against the fix. *Found by: QA panel gut-check, 2026-08-16. Fixed:
+  2026-08-16.*
+
+- ~~**`ruff check .` fails on `apps/api`.** 4 errors, all in
+  `scripts/benchmark.py` (an unsorted import block, three `E501`
+  line-too-long violations) — broken since the file was added in Phase 11.
+  `DEVELOPMENT_PLAN.md` claims "ruff clean" as acceptance criteria for
+  Phases 11 through 14; pyright genuinely was clean, so this looks like
+  `scripts/` quietly falling outside whatever check actually ran before
+  that got written down, not a doc-vs-code judgment call.~~ **Fixed.**
+  `ruff check --fix` resolved the import sort; the three long lines were
+  wrapped by hand. `ruff check .` now passes clean across the whole
+  `apps/api` tree, verified directly. *Found by: QA panel gut-check,
+  2026-08-16. Fixed: 2026-08-16.*
