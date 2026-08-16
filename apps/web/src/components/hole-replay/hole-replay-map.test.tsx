@@ -29,6 +29,7 @@ const hole: HoleReplay = {
   yardage: 400,
   tee: { lat: 33.7, lng: -78.9 },
   green_center: { lat: 33.7025, lng: -78.9 },
+  pin: null,
   green_boundary: null,
   shots: [],
   short_sided_count: 0,
@@ -74,6 +75,39 @@ describe("HoleReplayMap", () => {
 
     expect(screen.getByRole("alert")).toHaveTextContent("network down");
     expect(screen.getByRole("img", { name: "Hole 7 replay" })).toBeInTheDocument();
+  });
+
+  it("does not place a pin marker when the hole has no recorded pin", async () => {
+    render(<HoleReplayMap hole={hole} mapboxToken="pk.test-token" />);
+
+    await waitFor(() => expect(mapboxgl.Map).toHaveBeenCalledTimes(1));
+    const mapInstance = vi.mocked(mapboxgl.Map).mock.results[0].value;
+    act(() => {
+      mapInstance.on.mock.calls.find(([event]: [string]) => event === "load")?.[1]();
+    });
+
+    expect(mapboxgl.Marker).not.toHaveBeenCalledWith({ color: "#c9a227" });
+  });
+
+  it("places a distinct pin marker when the hole has a recorded pin", async () => {
+    render(
+      <HoleReplayMap
+        hole={{ ...hole, pin: { lat: 33.7026, lng: -78.9001 } }}
+        mapboxToken="pk.test-token"
+      />
+    );
+
+    await waitFor(() => expect(mapboxgl.Map).toHaveBeenCalledTimes(1));
+    const mapInstance = vi.mocked(mapboxgl.Map).mock.results[0].value;
+    act(() => {
+      mapInstance.on.mock.calls.find(([event]: [string]) => event === "load")?.[1]();
+    });
+
+    expect(mapboxgl.Marker).toHaveBeenCalledWith({ color: "#c9a227" });
+    const pinMarker = vi
+      .mocked(mapboxgl.Marker)
+      .mock.results.find((r) => r.value.setLngLat.mock.calls[0]?.[0][1] === 33.7026)?.value;
+    expect(pinMarker?.setLngLat).toHaveBeenCalledWith([-78.9001, 33.7026]);
   });
 
   it("does not render the map at all when the hole has no tee geometry", () => {

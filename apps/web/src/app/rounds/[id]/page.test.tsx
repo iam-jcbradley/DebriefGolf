@@ -55,7 +55,7 @@ const holes: HoleSummary[] = [
 function makeReplay(overrides: Partial<HoleReplay> = {}): HoleReplay {
   return {
     round_id: 1, hole_number: 1, par: 4, yardage: 400,
-    tee: { lat: 33.7, lng: -78.9 }, green_center: { lat: 33.7025, lng: -78.9 },
+    tee: { lat: 33.7, lng: -78.9 }, green_center: { lat: 33.7025, lng: -78.9 }, pin: null,
     green_boundary: null, shots: [], short_sided_count: 0,
     ...overrides,
   };
@@ -129,6 +129,115 @@ describe("RoundDetailPage", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
+  it("shows the fallback provenance note when the hole has no recorded pin", async () => {
+    mockGetRoundHoles.mockResolvedValue(holes);
+    mockGetHoleReplay.mockResolvedValue(makeReplay());
+
+    render(<RoundDetailPage />);
+
+    expect(
+      await screen.findByText("Based on green center — no pin recorded")
+    ).toBeInTheDocument();
+  });
+
+  it("omits the provenance note once both a pin and a green boundary are recorded", async () => {
+    mockGetRoundHoles.mockResolvedValue(holes);
+    mockGetHoleReplay.mockResolvedValue(
+      makeReplay({
+        pin: { lat: 33.7026, lng: -78.9001 },
+        green_boundary: [
+          { lat: 33.70255, lng: -78.90005 },
+          { lat: 33.70245, lng: -78.89995 },
+        ],
+      })
+    );
+
+    render(<RoundDetailPage />);
+    await screen.findByRole("img", { name: "Hole 1 replay" });
+
+    expect(screen.queryByText(/Based on/)).not.toBeInTheDocument();
+  });
+
+  it("shows a sucker-pin alert when the recorded pin falls inside the approach club's dispersion ellipse", async () => {
+    mockGetRoundHoles.mockResolvedValue(holes);
+    mockGetHoleReplay.mockResolvedValue(
+      makeReplay({
+        yardage: 400,
+        // 250y due north of the tee, dead on the aim line (lateral 0) — the
+        // same point the ellipse below is centered on once anchored to the
+        // approach shot's start position (400 - 150 = 250y from the tee).
+        pin: { lat: 33.702066115702479, lng: -78.9 },
+        shots: [
+          {
+            shot_id: 1, shot_number: 1, club: "7-Iron", start_lie: "fairway", end_lie: "green",
+            start_distance_yards: 150, end_distance_yards: 6, strokes_gained: 0.3, tag: null,
+            approach_leave: "on_green", has_pin: true, has_green_boundary: true, location: null,
+          },
+        ],
+      })
+    );
+    mockGetSmartBag.mockResolvedValue({
+      user_id: 9,
+      clubs: [
+        {
+          club: "7-Iron", sample_count: 5, excluded_outliers: 0,
+          carry_mean_yards: 150, carry_median_yards: 150, carry_stdev_yards: 5,
+          lateral_mean_yards: 0, lateral_stdev_yards: 4,
+          dispersion_ellipse: {
+            center_longitudinal_yards: 0, center_lateral_yards: 0,
+            semi_major_yards: 10, semi_minor_yards: 5, k: 1.5,
+          },
+        },
+      ],
+      gaps: [],
+    });
+
+    render(<RoundDetailPage />);
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Sucker pin");
+    expect(alert).toHaveTextContent("7-Iron");
+  });
+
+  it("does not show a sucker-pin alert when the pin falls outside the dispersion ellipse", async () => {
+    mockGetRoundHoles.mockResolvedValue(holes);
+    mockGetHoleReplay.mockResolvedValue(
+      makeReplay({
+        yardage: 400,
+        // Same aim line, but 500y out — far outside a 10y semi-major ellipse
+        // anchored at 250y.
+        pin: { lat: 33.704132231404959, lng: -78.9 },
+        shots: [
+          {
+            shot_id: 1, shot_number: 1, club: "7-Iron", start_lie: "fairway", end_lie: "green",
+            start_distance_yards: 150, end_distance_yards: 6, strokes_gained: 0.3, tag: null,
+            approach_leave: "on_green", has_pin: true, has_green_boundary: true, location: null,
+          },
+        ],
+      })
+    );
+    mockGetSmartBag.mockResolvedValue({
+      user_id: 9,
+      clubs: [
+        {
+          club: "7-Iron", sample_count: 5, excluded_outliers: 0,
+          carry_mean_yards: 150, carry_median_yards: 150, carry_stdev_yards: 5,
+          lateral_mean_yards: 0, lateral_stdev_yards: 4,
+          dispersion_ellipse: {
+            center_longitudinal_yards: 0, center_lateral_yards: 0,
+            semi_major_yards: 10, semi_minor_yards: 5, k: 1.5,
+          },
+        },
+      ],
+      gaps: [],
+    });
+
+    render(<RoundDetailPage />);
+    await screen.findByRole("img", { name: "Hole 1 replay" });
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
   it("fetches a dispersion ellipse for the approach club when one reached the green", async () => {
     mockGetRoundHoles.mockResolvedValue(holes);
     mockGetHoleReplay.mockResolvedValue(
@@ -137,7 +246,7 @@ describe("RoundDetailPage", () => {
           {
             shot_id: 1, shot_number: 1, club: "7-Iron", start_lie: "fairway", end_lie: "green",
             start_distance_yards: 150, end_distance_yards: 6, strokes_gained: 0.3, tag: null,
-            approach_leave: "on_green", location: null,
+            approach_leave: "on_green", has_pin: false, has_green_boundary: false, location: null,
           },
         ],
       })

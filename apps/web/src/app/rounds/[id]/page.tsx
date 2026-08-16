@@ -3,7 +3,9 @@
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HoleReplayMap } from "@/components/hole-replay/hole-replay-map";
+import { PinProvenanceNote } from "@/components/hole-replay/pin-provenance-note";
 import { ShortSidedBanner } from "@/components/hole-replay/short-sided-banner";
+import { SuckerPinAlert } from "@/components/hole-replay/sucker-pin-alert";
 import { NavBar } from "@/components/nav-bar";
 import { cn } from "@/lib/utils";
 import {
@@ -16,6 +18,8 @@ import {
   type HoleSummary,
 } from "@/lib/api";
 import { pickApproachShot } from "@/lib/hole-replay/approach-club";
+import { isWithinEllipse } from "@/lib/hole-replay/dispersion";
+import { offsetFromAimLine } from "@/lib/hole-replay/projection";
 
 export default function RoundDetailPage() {
   const params = useParams<{ id: string }>();
@@ -28,6 +32,7 @@ export default function RoundDetailPage() {
   const [ellipseAnchorYards, setEllipseAnchorYards] = useState<
     { longitudinal: number; lateral: number } | null
   >(null);
+  const [suckerPinClub, setSuckerPinClub] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -52,6 +57,7 @@ export default function RoundDetailPage() {
     setReplay(null);
     setEllipse(null);
     setEllipseAnchorYards(null);
+    setSuckerPinClub(null);
 
     getHoleReplay(roundId, selectedHole)
       .then(async (result) => {
@@ -66,14 +72,31 @@ export default function RoundDetailPage() {
         if (cancelled) return;
         const clubStats = bag.clubs.find((c) => c.club === approachShot.club);
         if (cancelled) return;
-        setEllipse(clubStats?.dispersion_ellipse ?? null);
+        const ellipse = clubStats?.dispersion_ellipse ?? null;
+        setEllipse(ellipse);
         // The ellipse's mean/stdev are carry distance *from where the shot
         // was struck*, so anchor it there rather than at the tee — see
         // HoleReplaySvgProps.ellipseAnchorYards.
-        setEllipseAnchorYards({
+        const anchor = {
           longitudinal: result.yardage - approachShot.start_distance_yards,
           lateral: 0,
-        });
+        };
+        setEllipseAnchorYards(anchor);
+
+        // "Sucker pin" check (PRD §5.3): is today's actual pin inside this
+        // club's typical dispersion pattern? Needs the same aim-line
+        // projection the map itself uses, undoing `anchor` to land the pin
+        // in the ellipse's own (unanchored) coordinate frame — the inverse
+        // of how HoleReplaySvg positions the ellipse on screen.
+        if (ellipse && result.pin && result.tee && result.green_center) {
+          const pinOffset = offsetFromAimLine(result.tee, result.green_center, result.pin);
+          const withinEllipse = isWithinEllipse(
+            ellipse,
+            pinOffset.longitudinalYards - anchor.longitudinal,
+            pinOffset.lateralYards - anchor.lateral
+          );
+          setSuckerPinClub(withinEllipse ? approachShot.club : null);
+        }
       })
       .catch((err) => {
         if (!cancelled) {
@@ -130,9 +153,14 @@ export default function RoundDetailPage() {
               holeNumber={replay.hole_number}
               shortSidedCount={replay.short_sided_count}
             />
+            {suckerPinClub && <SuckerPinAlert club={suckerPinClub} />}
             <p className="text-sm text-muted-foreground">
               Par {replay.par} · {replay.yardage}y
             </p>
+            <PinProvenanceNote
+              hasPin={replay.pin !== null}
+              hasGreenBoundary={replay.green_boundary !== null}
+            />
             <HoleReplayMap hole={replay} ellipse={ellipse} ellipseAnchorYards={ellipseAnchorYards} />
           </div>
         )}

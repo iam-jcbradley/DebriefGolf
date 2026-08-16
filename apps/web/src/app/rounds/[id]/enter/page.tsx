@@ -8,9 +8,11 @@ import {
   ApiError,
   getHoleReplay,
   getRoundHoles,
+  submitRoundPins,
   submitRoundShots,
   type HoleReplay,
   type HoleSummary,
+  type LatLngPoint,
   type ShotCreateInput,
 } from "@/lib/api";
 import type { DraftShot } from "@/lib/audit/types";
@@ -83,6 +85,18 @@ export default function EnterRoundPage() {
 
   function removeShot(id: string) {
     setShots(shots.filter((shot) => shot.id !== id));
+  }
+
+  async function handleSetPin(latlng: LatLngPoint) {
+    if (selectedHole === null) return;
+    try {
+      const [pin] = await submitRoundPins(roundId, [
+        { hole_number: selectedHole, location: latlng },
+      ]);
+      setHoleReplay((current) => (current ? { ...current, pin: pin.location } : current));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save the pin");
+    }
   }
 
   async function handleSubmitRound() {
@@ -160,7 +174,12 @@ export default function EnterRoundPage() {
         )}
 
         {holeReplay && loaded && (
-          <HoleShotEntry hole={holeReplay} draftShotsForHole={shotsForSelectedHole} onAdd={handleAdd} />
+          <HoleShotEntry
+            hole={holeReplay}
+            draftShotsForHole={shotsForSelectedHole}
+            onAdd={handleAdd}
+            onSetPin={handleSetPin}
+          />
         )}
 
         {shotsForSelectedHole.length > 0 && (

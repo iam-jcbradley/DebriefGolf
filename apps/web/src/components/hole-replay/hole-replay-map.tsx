@@ -80,6 +80,15 @@ export function HoleReplayMap({
             .setLngLat([hole.green_center.lng, hole.green_center.lat])
             .addTo(map);
         }
+        // The actual pin position (Phase 14) — distinct from the green
+        // marker above, which stays put regardless of where the hole was
+        // cut. Absent for most rounds, in which case there's nothing to
+        // draw and short-siding reasoning falls back to green_center.
+        if (hole.pin) {
+          new mapboxgl.Marker({ color: "#c9a227" })
+            .setLngLat([hole.pin.lng, hole.pin.lat])
+            .addTo(map);
+        }
 
         const shotsWithLocation = hole.shots.filter((shot) => shot.location !== null);
         for (const shot of shotsWithLocation) {

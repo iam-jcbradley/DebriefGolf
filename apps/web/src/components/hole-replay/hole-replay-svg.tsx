@@ -64,6 +64,11 @@ export function HoleReplaySvg({
 
   const teePoint = project(tee);
   const greenPoint = project(green);
+  const pinPoint = hole.pin ? project(hole.pin) : null;
+  // The aim line and short-game reasoning both target the actual pin once
+  // one's been recorded (Phase 14) — the green center is a fallback, not
+  // the goal, once real data exists.
+  const aimPoint = pinPoint ?? greenPoint;
   const boundaryPoints = hole.green_boundary?.map(project);
 
   const shotsWithLocation = hole.shots.filter(
@@ -94,7 +99,7 @@ export function HoleReplaySvg({
       className={onPick ? "cursor-crosshair" : undefined}
     >
       <line
-        x1={teePoint.x} y1={teePoint.y} x2={greenPoint.x} y2={greenPoint.y}
+        x1={teePoint.x} y1={teePoint.y} x2={aimPoint.x} y2={aimPoint.y}
         stroke="var(--border)" strokeDasharray="4 4"
       />
 
@@ -121,6 +126,19 @@ export function HoleReplaySvg({
 
       <circle cx={teePoint.x} cy={teePoint.y} r={4} fill="var(--foreground)" />
       <circle cx={greenPoint.x} cy={greenPoint.y} r={4} fill="var(--status-good)" />
+
+      {pinPoint && (
+        <g data-testid="pin-marker">
+          <line
+            x1={pinPoint.x} y1={pinPoint.y} x2={pinPoint.x} y2={pinPoint.y - 14}
+            stroke="var(--foreground)" strokeWidth={1.5}
+          />
+          <path
+            d={`M ${pinPoint.x} ${pinPoint.y - 14} L ${pinPoint.x + 9} ${pinPoint.y - 10.5} L ${pinPoint.x} ${pinPoint.y - 7} Z`}
+            fill="var(--primary)"
+          />
+        </g>
+      )}
 
       {shotPoints.map(({ shot, point }) => (
         <circle

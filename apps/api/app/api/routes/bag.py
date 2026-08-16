@@ -1,38 +1,11 @@
-from collections import defaultdict
-
 from fastapi import APIRouter
-from sqlalchemy import func
-from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
-from app.models import Hole, Round, Shot
+from app.api.routes._shot_queries import club_gapping_with_lateral, fetch_on_course_shots
 from app.services.dispersion import compute_dispersion_ellipse
-from app.services.geometry import ShotGeometryRow, compute_lateral_by_club
-from app.services.smart_bag import compute_club_gapping, compute_gaps, shot_carry_distance
+from app.services.smart_bag import compute_gaps
 
 router = APIRouter()
-
-
-def _fetch_shot_geometry_rows(session: Session, user_id: int) -> list[ShotGeometryRow]:
-    query = (
-        select(
-            Shot.club,
-            func.ST_Y(Shot.location).label("shot_lat"),
-            func.ST_X(Shot.location).label("shot_lng"),
-            func.ST_Y(Hole.tee_location).label("tee_lat"),
-            func.ST_X(Hole.tee_location).label("tee_lng"),
-            func.ST_Y(Hole.green_center).label("green_lat"),
-            func.ST_X(Hole.green_center).label("green_lng"),
-        )
-        .join(Hole, Shot.hole_id == Hole.id)
-        .join(Round, Shot.round_id == Round.id)
-        .where(Round.user_id == user_id)
-        .where(Shot.club.is_not(None))
-        .where(Shot.location.is_not(None))
-        .where(Hole.tee_location.is_not(None))
-        .where(Hole.green_center.is_not(None))
-    )
-    return [ShotGeometryRow(**row._mapping) for row in session.exec(query)]  # type: ignore[arg-type]
 
 
 @router.get("/bag")
@@ -44,37 +17,12 @@ def get_smart_bag(user: CurrentUser, session: SessionDep) -> dict:
     location-tagged shot (PRD §10 Phase 4 — see app/services/geometry.py for
     where the lateral offset comes from).
     """
-    # One join rather than "select this user's round ids, then select shots
-    # where round_id IN (...)": that was two round trips and an unbounded IN
-    # list that grew with every round the user ever played.
-    #
     # Raw columns rather than `select(Shot)`: this reads every shot the
     # player has ever recorded, and building that many ORM instances costs
     # ~5x what the five columns actually used cost. See
     # app/services/shot_view.py.
-    shots = list(
-        session.exec(
-            select(
-                Shot.club,
-                Shot.start_distance_yards,
-                Shot.end_distance_yards,
-                Shot.end_lie,
-                Shot.strokes_gained,
-            )
-            .join(Round, Shot.round_id == Round.id)
-            .where(Round.user_id == user.id)
-        ).all()
-    )
-
-    distances_by_club: dict[str, list[float]] = defaultdict(list)
-    for shot in shots:
-        distance = shot_carry_distance(shot)
-        if distance is not None and distance > 0 and shot.club is not None:
-            distances_by_club[shot.club].append(distance)
-
-    lateral_by_club = compute_lateral_by_club(_fetch_shot_geometry_rows(session, user.id))
-
-    stats = compute_club_gapping(distances_by_club, lateral_by_club=lateral_by_club)
+    shots = fetch_on_course_shots(session, user.id)
+    stats = club_gapping_with_lateral(session, user.id, shots)
     gaps = compute_gaps(stats)
 
     clubs = []
