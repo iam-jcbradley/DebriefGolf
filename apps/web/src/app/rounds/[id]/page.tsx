@@ -2,6 +2,7 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { HoleReplayMap } from "@/components/hole-replay/hole-replay-map";
 import { PinProvenanceNote } from "@/components/hole-replay/pin-provenance-note";
 import { ShortSidedBanner } from "@/components/hole-replay/short-sided-banner";
@@ -112,7 +113,10 @@ export default function RoundDetailPage() {
     <div className="min-h-screen">
       <NavBar />
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Round #{roundId} — Hole Replay</h1>
+        <Link href="/rounds" className="text-sm text-muted-foreground underline hover:text-foreground">
+          &larr; Back to rounds
+        </Link>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">Round #{roundId} — Hole Replay</h1>
 
         {error && (
           <p role="alert" className="mt-4 text-destructive">

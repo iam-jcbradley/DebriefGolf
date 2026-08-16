@@ -5,6 +5,10 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, type FormEvent } from "react";
 import { NavBar } from "@/components/nav-bar";
 import { SignedOut } from "@/components/signed-out";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Overline } from "@/components/ui/overline";
+import { Select } from "@/components/ui/select";
 import { ApiError, createRound, getCourses, type CourseListItem } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
 
@@ -80,14 +84,10 @@ function NewRoundForm() {
         For <strong className="text-foreground">{user.name}</strong>.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-3">
-        <label className="block text-sm">
-          Course
-          <select
-            value={courseId}
-            onChange={(e) => setCourseId(e.target.value)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-          >
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <label className="flex flex-col gap-1 text-sm">
+          <Overline as="span">Course</Overline>
+          <Select value={courseId} onChange={(e) => setCourseId(e.target.value)}>
             <option value="">Select a course…</option>
             {courses?.map((c) => (
               <option key={c.id} value={c.id}>
@@ -95,7 +95,7 @@ function NewRoundForm() {
                 {c.city ? ` — ${c.city}` : ""}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Link
           href="/courses/new"
@@ -104,14 +104,9 @@ function NewRoundForm() {
           Don&apos;t see your course? Add it
         </Link>
 
-        <label className="block text-sm">
-          Date played (optional)
-          <input
-            type="date"
-            value={playedAt}
-            onChange={(e) => setPlayedAt(e.target.value)}
-            className="mt-1 w-full rounded-md border px-3 py-2 text-sm"
-          />
+        <label className="flex flex-col gap-1 text-sm">
+          <Overline as="span">Date played (optional)</Overline>
+          <Input type="date" value={playedAt} onChange={(e) => setPlayedAt(e.target.value)} />
         </label>
 
         {error && (
@@ -120,13 +115,9 @@ function NewRoundForm() {
           </p>
         )}
 
-        <button
-          type="submit"
-          disabled={creating}
-          className="rounded-md border bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-50"
-        >
+        <Button type="submit" disabled={creating}>
           {creating ? "Creating…" : "Create round"}
-        </button>
+        </Button>
       </form>
     </main>
   );

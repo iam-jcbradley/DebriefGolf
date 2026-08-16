@@ -2,6 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { HoleReplayMap } from "@/components/hole-replay/hole-replay-map";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Overline } from "@/components/ui/overline";
+import { Select } from "@/components/ui/select";
 import type { HoleReplay, HoleReplayShot, LatLngPoint } from "@/lib/api";
 import { LIES, type DraftShot, type Lie } from "@/lib/audit/types";
 import { cn } from "@/lib/utils";
@@ -143,86 +147,71 @@ export function HoleShotEntry({ hole, draftShotsForHole, onAdd, onSetPin }: Hole
         </p>
       )}
 
-      <form onSubmit={handleSubmit} className="rounded-lg border p-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <label className="text-sm">
-            Club
-            <input
+      <form onSubmit={handleSubmit} className="rounded-md border border-border bg-card p-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Club</Overline>
+            <Input
               type="text"
               value={club}
               onChange={(e) => setClub(e.target.value)}
               placeholder="7-Iron / Putter"
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
-          <label className="text-sm">
-            Start lie
-            <select
-              value={startLie}
-              onChange={(e) => setStartLie(e.target.value as Lie)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
-            >
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Start lie</Overline>
+            <Select value={startLie} onChange={(e) => setStartLie(e.target.value as Lie)}>
               {REVIEWABLE_LIES.map((lie) => (
                 <option key={lie} value={lie}>
                   {lie}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
-          <label className="text-sm">
-            End lie
-            <select
-              value={endLie}
-              onChange={(e) => setEndLie(e.target.value as Lie)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
-            >
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">End lie</Overline>
+            <Select value={endLie} onChange={(e) => setEndLie(e.target.value as Lie)}>
               {LIES.map((lie) => (
                 <option key={lie} value={lie}>
                   {lie}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
-          <label className="text-sm">
-            Start distance (yd)
-            <input
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Start distance (yd)</Overline>
+            <Input
               type="number"
               min={0}
               step="any"
               value={startDistance}
               onChange={(e) => setStartDistance(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
-          <label className="text-sm">
-            End distance (yd)
-            <input
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">End distance (yd)</Overline>
+            <Input
               type="number"
               min={0}
               step="any"
               value={endDistance}
               onChange={(e) => setEndDistance(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
-          <label className="text-sm">
-            Tag (optional)
-            <input
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Tag (optional)</Overline>
+            <Input
               type="text"
               value={tag}
               onChange={(e) => setTag(e.target.value)}
               placeholder="OB Right"
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
         </div>
 
-        <button
-          type="submit"
-          className="mt-3 rounded-md border bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
-        >
+        <Button type="submit" className="mt-4">
           Add shot
-        </button>
+        </Button>
       </form>
     </div>
   );

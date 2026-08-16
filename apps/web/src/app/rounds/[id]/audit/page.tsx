@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useParams } from "next/navigation";
 import { AddShotForm } from "@/components/audit-wizard/add-shot-form";
 import { AuditWizard } from "@/components/audit-wizard/audit-wizard";
@@ -23,7 +24,10 @@ export default function RoundAuditPage() {
       <NavBar />
       <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Audit round #{roundId}</h1>
+          <Link href="/rounds" className="text-sm text-muted-foreground underline hover:text-foreground">
+            &larr; Back to rounds
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold tracking-tight">Audit round #{roundId}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Enter this round&apos;s shots, then work through anything the wizard flags for
             review.
