@@ -326,9 +326,15 @@ unhandled exception is a bare 500 with nothing on disk to explain it.
   dependency and secret scanning (Dependabot, CodeQL, `pip-audit`/`pnpm audit`),
   coverage reporting, and a build of the prod Docker targets, which are never
   exercised today.
-- [ ] A `CLAUDE.md` recording the conventions this repo already follows —
-  raw-column selects to avoid geoalchemy2's non-serializable `WKBElement`, the
-  PRD-section-reference comment style, the phase-per-PR rhythm.
+- [x] **Delivered early, out of phase order.** A root `CLAUDE.md` recording the
+  conventions this repo already follows — raw-column selects to avoid
+  geoalchemy2's non-serializable `WKBElement`, the `geometry.py` ↔
+  `projection.ts` mirror, the deliberate `VirtualRound`/`Round` split, the
+  alembic autogenerate caveats, Phase 9's test fixtures, the PRD-section-
+  reference comment style, and the documented-verification-limit convention for
+  integrations that can't be exercised here. It also states plainly that no
+  endpoint authenticates anyone, so the gap gets read as scheduled work
+  (Phase 10) rather than as a pattern to copy.
 
 **Acceptance criteria:** a deliberately-thrown error produces a correlatable log
 line; CI fails on a known-vulnerable dependency and on a type error.
