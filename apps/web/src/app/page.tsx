@@ -16,7 +16,7 @@ import { useDashboardData } from "@/lib/use-dashboard-data";
 
 export default function DashboardPage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = useDashboardData(user !== null);
+  const { state, refresh } = useDashboardData(user?.id ?? null);
 
   return (
     <div className="min-h-screen">

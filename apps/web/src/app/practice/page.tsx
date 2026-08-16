@@ -25,7 +25,7 @@ const DeliveryTrendChart = dynamic(
 
 export default function PracticePage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = usePracticeData(user !== null);
+  const { state, refresh } = usePracticeData(user?.id ?? null);
   const [selectedClub, setSelectedClub] = useState<string | null>(null);
 
   const clubsWithTrend = state.status === "ready" ? Object.keys(state.delivery.trend) : [];

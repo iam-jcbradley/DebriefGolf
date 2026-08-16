@@ -8,7 +8,7 @@ or database. That's a deliberate boundary, not an oversight: it keeps
 docs/DATA_PRIVACY.md's "third-party OAuth data" framing accurate rather
 than silently expanding what this app touches.
 
-Built against `garminconnect==0.3.2`'s actual installed source (inspected
+Built against `garminconnect==0.3.5`'s actual installed source (inspected
 directly, not just its README) since this whole integration is
 reverse-engineered and undocumented by Garmin itself:
 - `Garmin(email, password, return_on_mfa=True)` constructs a client.
@@ -23,13 +23,24 @@ reverse-engineered and undocumented by Garmin itself:
 - Golf-specific endpoints (`get_golf_summary`/`get_golf_scorecard`/
   `get_golf_shot_data`) are themselves reverse-engineered by
   garminconnect's maintainers, not documented by Garmin — their *method
-  signatures* are verified against the installed package, but their exact
-  response *shape* is unverified here since this environment has no live
-  Garmin account to test against (Garmin's SSO/Connect hosts are blocked
-  by this sandbox's network policy, confirmed via its proxy status
-  endpoint — same boundary as this project's Mapbox/OSM integrations).
-  Treat the golf JSON's field names as provisional until you've run this
-  for real and inspected a sample.
+  signatures* are verified against the installed package. Their response
+  *shape* is only partly verified, and by a different route than this
+  tool's own code: a real, sanitized sample of the raw REST responses
+  (fetched by a browser-session-cookie userscript hitting
+  `https://connect.garmin.com/modern/proxy/gcs-golfcommunity/api/v2/
+  scorecard/summary` and `.../scorecard/detail?scorecard-ids=<id>` directly)
+  confirms `get_golf_summary`'s and `get_golf_scorecard`'s *target API*
+  returns `{scorecardSummaries: [...]}` and `{scorecardDetails: [{scorecard:
+  {...}, scorecardStats: {...}}], courseSnapshots: [{...}]}` respectively —
+  see `scorecard_mapper.py`, which maps that confirmed shape. Whether the
+  `garminconnect` package's wrapper methods return that exact JSON
+  byte-for-byte (rather than transforming it) is still unverified in this
+  environment, since Garmin's SSO/Connect hosts are blocked by this
+  sandbox's network policy (confirmed via its proxy status endpoint — same
+  boundary as this project's Mapbox/OSM integrations); treat that one hop
+  as high confidence, not proven. `get_golf_shot_data`'s response shape
+  remains fully provisional — no sample of it, verified or otherwise, has
+  been seen from this codebase.
 
 Caveats worth knowing before relying on this:
 - Almost certainly outside Garmin's Terms of Service for automated
@@ -41,8 +52,17 @@ Caveats worth knowing before relying on this:
   bot detection, or rate-limit/lock an account that authenticates
   unusually often, none of which this tool can anticipate or work around.
 - `garth` (the library this ecosystem used to depend on) is deprecated;
-  garminconnect 0.3.2 no longer requires it, which is why it's not in
+  garminconnect no longer requires it, which is why it's not in
   requirements.txt despite being mentioned in earlier drafts of this idea.
+- Pinned to `0.3.5`, not `0.3.2`, specifically for a security fix
+  (PYSEC-2026-3467, CWE-732): versions up to 0.3.4 wrote the token store to
+  disk with whatever the process umask allowed, so `.garmin_tokens/` could
+  end up world-readable (containing a live Garmin refresh token) on a
+  shared host. Re-verified against the 0.3.5 installed source before
+  bumping — every method this module calls (`login`, `resume_login`,
+  `get_golf_summary`, `get_golf_scorecard`, `get_golf_shot_data`,
+  `get_activities`, `download_activity`, `client.dump`) has the identical
+  signature it had at 0.3.2, and the full mocked test suite still passes.
 """
 
 from __future__ import annotations
@@ -130,14 +150,17 @@ class GarminImportClient:
         }
 
     def list_scorecards(self, limit: int = 20) -> list[dict[str, Any]]:
-        """Recent golf scorecard summaries. Unverified response shape —
-        see module docstring."""
+        """Recent golf scorecard summaries. Target API's shape is verified
+        (module docstring); this wrapper method's own output isn't
+        independently confirmed to match."""
         self._require_login()
         return self._garmin.get_golf_summary(start=0, limit=limit)
 
     def get_scorecard(self, scorecard_id: str) -> dict[str, Any]:
         """Full detail for one scorecard (per-hole scores, fairway
-        hit/miss, putts, club tracking). Unverified response shape."""
+        hit/miss, putts — no club tracking or shot GPS, see module
+        docstring). Target API's shape is verified; `scorecard_mapper.py`
+        maps it into DebriefGolf's schema."""
         self._require_login()
         return self._garmin.get_golf_scorecard(scorecard_id)
 

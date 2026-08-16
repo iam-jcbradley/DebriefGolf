@@ -2,7 +2,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Column
+from sqlalchemy import Column, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
@@ -22,6 +22,16 @@ class Lie(StrEnum):
 
 
 class Shot(SQLModel, table=True):
+    # A hole's shot 1, shot 2, ... is a natural key, not just a dedup
+    # mechanism — two different shots can't both be "shot #2 of hole #5 of
+    # this round". Enforced at the DB level (not just app-level checking) so
+    # `POST /rounds/{id}/shots/bulk` retried after a dropped connection
+    # can't silently duplicate a hole's shots; see that route for how a
+    # collision is handled (the existing shot wins, not an error).
+    __table_args__ = (
+        UniqueConstraint("round_id", "hole_id", "shot_number", name="uq_shot_round_hole_number"),
+    )
+
     id: int | None = Field(default=None, primary_key=True)
     round_id: int = Field(foreign_key="round.id", index=True, ondelete="CASCADE")
     # No cascade: a Hole is shared reference geometry, not this shot's to own.

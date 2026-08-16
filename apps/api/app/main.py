@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.observability import RequestIdMiddleware, unhandled_exception_handler
 from app.api.routes.auth import router as auth_router
 from app.api.routes.bag import router as bag_router
 from app.api.routes.courses import router as courses_router
@@ -12,8 +13,15 @@ from app.api.routes.rounds import router as rounds_router
 from app.api.routes.virtual_rounds import router as virtual_rounds_router
 from app.api.uploads import RequestSizeLimitMiddleware
 from app.core.config import settings
+from app.core.logging import configure_logging
+
+configure_logging()
 
 app = FastAPI(title="Debrief Golf API")
+
+# Every unhandled exception (not an HTTPException — see observability.py)
+# gets logged with a traceback and answers with a body that has none in it.
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # Outermost: rejects an oversized request before routing or body parsing,
 # so an upload that's far too large never gets spooled. See app/api/uploads.py.
@@ -32,6 +40,10 @@ app.add_middleware(
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type"],
 )
+
+# Outermost of all: assigns the request id every log line during this
+# request picks up, before CORS/size-limit middleware even run.
+app.add_middleware(RequestIdMiddleware)
 
 app.include_router(health_router, prefix="/api")
 app.include_router(auth_router, prefix="/api")

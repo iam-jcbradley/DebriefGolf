@@ -23,6 +23,7 @@ __pycache__/
 coverage/
 htmlcov/
 .coverage
+coverage.xml
 
 # --- Editors / OS ---
 .vscode/*

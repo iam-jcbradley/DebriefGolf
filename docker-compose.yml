@@ -32,6 +32,23 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      # Liveness (/health), deliberately not readiness (/ready) — a
+      # container marked unhealthy gets restarted, and a Postgres blip
+      # shouldn't trigger that for a process that's otherwise fine (Phase
+      # 12's whole reason for splitting the two). No curl in this image, so
+      # this shells out to Python instead of adding a package for one check.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
   web:
     build:

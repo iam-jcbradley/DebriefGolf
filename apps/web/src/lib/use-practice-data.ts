@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import useSWR from "swr";
 import {
   ApiError,
   getDeliveryProfile,
@@ -20,45 +20,38 @@ export interface UsePracticeData {
   refresh: () => void;
 }
 
+async function fetchPracticeData() {
+  const [delivery, combines] = await Promise.all([getDeliveryProfile(), getPracticeCombines()]);
+  return { delivery, combines };
+}
+
 /** Loads the Practice Hub's two data sources — delivery profile (PRD §6.1)
  * and prescriptive combines (PRD §7.1) — together, since both are scoped to
- * the session user and the page renders them side by side. */
-export function usePracticeData(signedIn: boolean): UsePracticeData {
-  const [state, setState] = useState<PracticeDataState>({ status: "idle" });
-  const [refreshKey, setRefreshKey] = useState(0);
+ * the session user and the page renders them side by side.
+ *
+ * `userId`: scopes the SWR cache key so switching who's signed in (no
+ * forced page reload — see current-user.tsx) can't briefly render the
+ * previous player's cached data before revalidating. `null` disables the
+ * fetch entirely. */
+export function usePracticeData(userId: number | null): UsePracticeData {
+  const { data, error, isLoading, mutate } = useSWR(
+    userId !== null ? ["practice-data", userId] : null,
+    fetchPracticeData
+  );
 
-  useEffect(() => {
-    if (!signedIn) {
-      setState({ status: "idle" });
-      return;
-    }
-    let cancelled = false;
-
-    async function load() {
-      setState({ status: "loading" });
-      try {
-        const [delivery, combines] = await Promise.all([
-          getDeliveryProfile(),
-          getPracticeCombines(),
-        ]);
-        if (!cancelled) setState({ status: "ready", delivery, combines });
-      } catch (error) {
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: error instanceof ApiError ? error.message : "Failed to load practice data",
-          });
-        }
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
+  let state: PracticeDataState;
+  if (userId === null) {
+    state = { status: "idle" };
+  } else if (error) {
+    state = {
+      status: "error",
+      message: error instanceof ApiError ? error.message : "Failed to load practice data",
     };
-  }, [signedIn, refreshKey]);
+  } else if (isLoading || !data) {
+    state = { status: "loading" };
+  } else {
+    state = { status: "ready", delivery: data.delivery, combines: data.combines };
+  }
 
-  const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
-
-  return { state, refresh };
+  return { state, refresh: () => void mutate() };
 }

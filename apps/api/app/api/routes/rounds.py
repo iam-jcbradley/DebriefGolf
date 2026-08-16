@@ -190,10 +190,16 @@ def create_shots_bulk(
     entry flow accumulates a hole's shots client-side (same `DraftShot`
     pattern the Phase 3 audit wizard already built, including its optional
     GPS `location` picked on the hole map) and submits them here once the
-    user is done with a hole or the whole round. Purely additive: calling
-    this twice for the same round creates two sets of shots, it doesn't
-    replace anything — there's no manual-entry "edit a submitted round" flow
-    yet.
+    user is done with a hole or the whole round.
+
+    Idempotent on `(round_id, hole_id, shot_number)` — a hole's shot 1,
+    shot 2, ... is a natural key (`Shot.__table_args__`), so a retried
+    submit (a dropped connection after the write actually went through,
+    same shot resubmitted) returns the shot that's already there instead of
+    creating a duplicate or erroring. It's still purely additive in the
+    sense that matters: there's no way to *edit* a previously-submitted
+    shot's club/lie/distances through this endpoint, only to (harmlessly)
+    resubmit it unchanged.
     """
     round_ = _owned_round(round_id, user, session)
     if round_.course_id is None:
@@ -209,11 +215,21 @@ def create_shots_bulk(
             detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
         )
 
-    created: list[tuple[Shot, ShotCreateIn]] = []
+    existing_by_key = {
+        (shot.hole_id, shot.shot_number): shot
+        for shot in session.exec(select(Shot).where(Shot.round_id == round_id)).all()
+    }
+
+    result_pairs: list[tuple[Shot, ShotCreateIn]] = []
     for s in payload.shots:
+        key = (hole_id_by_number[s.hole_number], s.shot_number)
+        existing = existing_by_key.get(key)
+        if existing is not None:
+            result_pairs.append((existing, s))
+            continue
         shot = Shot(
             round_id=round_id,
-            hole_id=hole_id_by_number[s.hole_number],
+            hole_id=key[0],
             shot_number=s.shot_number,
             club=s.club,
             start_lie=s.start_lie,
@@ -228,17 +244,25 @@ def create_shots_bulk(
             tag=s.tag,
         )
         session.add(shot)
-        created.append((shot, s))
+        # Guards a duplicate *within this same payload* too, not just
+        # against what was already in the database.
+        existing_by_key[key] = shot
+        result_pairs.append((shot, s))
     session.commit()
 
     # Built from `shot.id` plus the already-known request payload, not by
     # re-reading `shot.location` off the refreshed ORM object — geoalchemy2
     # hands that back as a `WKBElement`, which isn't JSON-serializable (see
-    # the same fix on `GET /rounds/{round_id}/shots` above).
+    # the same fix on `GET /rounds/{round_id}/shots` above). For a reused
+    # (already-existing) shot this reports the *incoming* payload's values
+    # rather than re-reading the stored row — correct for a true retry
+    # (they're identical), and simplest for a client that resubmits
+    # something slightly different: no edit path exists here to honor that
+    # difference anyway, this endpoint just doesn't silently duplicate it.
     _persist_round_strokes_gained(session, round_id, user.handicap_index)
 
     result = []
-    for shot, s in created:
+    for shot, s in result_pairs:
         session.refresh(shot)
         result.append(
             {
@@ -364,6 +388,19 @@ def get_round_analytics(
         hole.id: hole
         for hole in session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
     }
+    if not all(shot.hole_id in holes for shot in shots):
+        # The round's course changed (audit wizard correction, manual
+        # reassignment) after these shots were recorded against the old
+        # one's holes — Hole rows are shared reference geometry and aren't
+        # deleted when that happens, so the FK is still valid, just stale.
+        # `holes[shot.hole_id]` below would KeyError; a 409 says plainly
+        # what's wrong instead. Same mismatch `_persist_round_strokes_gained`
+        # already treats as a no-op rather than crash.
+        raise HTTPException(
+            status_code=409,
+            detail="This round's course has changed since some of its shots were recorded. "
+            "Reassign the correct course, or re-run the audit wizard, before viewing analytics.",
+        )
 
     sg_summary = compute_round_strokes_gained(
         [(shot, holes[shot.hole_id].par) for shot in shots], handicap_index

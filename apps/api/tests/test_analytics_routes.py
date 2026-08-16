@@ -94,3 +94,30 @@ def test_analytics_endpoint_does_not_write(
 def test_analytics_endpoint_404_for_unknown_round(auth_client: TestClient) -> None:
     response = auth_client.get("/api/rounds/999999/analytics")
     assert response.status_code == 404
+
+
+def test_analytics_endpoint_409_when_course_reassigned_after_shots_recorded(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    """A shot's `hole_id` still points at the round's *original* course once
+    the round is reassigned to a different one — `Hole` rows are shared
+    reference geometry, not deleted or rewritten on reassignment. Regression
+    test for the KeyError this used to raise (a bare 500) instead of the
+    409 a stale-but-still-valid foreign key actually calls for."""
+    round_id = _seed_round_with_shots(db_session, user)
+
+    other_course = Course(name="A Different Course")
+    db_session.add(other_course)
+    db_session.commit()
+    db_session.refresh(other_course)
+    db_session.add(Hole(course_id=other_course.id, number=1, par=4, yardage=380))
+    db_session.commit()
+
+    round_ = db_session.get(Round, round_id)
+    round_.course_id = other_course.id
+    db_session.add(round_)
+    db_session.commit()
+
+    response = auth_client.get(f"/api/rounds/{round_id}/analytics")
+
+    assert response.status_code == 409

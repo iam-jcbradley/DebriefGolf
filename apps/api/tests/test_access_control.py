@@ -28,13 +28,15 @@ from app.main import app
 from app.models import Course, Hole, Round, RoundStatus, SimPlatform, User, VirtualRound
 
 # Public by design:
-#   health   — a liveness probe that must answer before anyone can log in
+#   health/ready — liveness/readiness probes that must answer before anyone
+#                  can log in, and before there's a session to check
 #   register/login — you can't hold a session before you have one
 #   logout   — clearing a cookie shouldn't require the cookie to be valid
 #   garmin callback — Garmin's redirect, authorized by the HMAC-signed
 #                     `state` token instead (see app/api/routes/garmin_auth.py)
 PUBLIC_ENDPOINTS = {
     ("GET", "/api/health"),
+    ("GET", "/api/ready"),
     ("POST", "/api/auth/register"),
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),

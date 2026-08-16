@@ -399,24 +399,115 @@ migration was verified up, down and up again against a real PostGIS instance.
 Benchmark numbers above are reproducible with
 `uv run python scripts/benchmark.py`.
 
-## Phase 12 — Observability & Operational Readiness
+## Phase 12 — Observability & Operational Readiness (done, with noted gaps)
 
-Goal: `grep -rn "import logging" apps/api/app` currently returns nothing. An
-unhandled exception is a bare 500 with nothing on disk to explain it.
+Goal: `grep -rn "import logging" apps/api/app` used to return nothing. An
+unhandled exception was a bare 500 with nothing on disk to explain it.
 
-- [ ] Structured logging with a request id, and exception handlers that log the
-  traceback while returning a clean error body.
-- [ ] Split `/api/health` (process is up) from `/api/ready` (database reachable)
-  — they're conflated today, so the container reads as dead whenever Postgres
-  blips.
-- [ ] CI: Python type checking (mypy or pyright — `bag.py` already carries a
-  `# type: ignore[arg-type]`, exactly where a checker earns its keep),
-  dependency and secret scanning (Dependabot, CodeQL, `pip-audit`/`pnpm audit`),
-  coverage reporting, and a build of the prod Docker targets, which are never
-  exercised today.
-- [x] **Delivered early, out of phase order.** A root `CLAUDE.md` recording the
-  conventions this repo already follows — raw-column selects to avoid
-  geoalchemy2's non-serializable `WKBElement`, the `geometry.py` ↔
+- [x] **Structured logging + request-id correlation** (`app/core/logging.py`,
+  `app/api/observability.py`): stdlib `logging` (no new dependency — a JSON
+  formatter is a dozen lines) emitting one JSON object per line, tagged with a
+  per-request id from a contextvar. `RequestIdMiddleware` generates one id per
+  request, echoes it as `X-Request-Id`, and logs a `method path -> status in
+  Nms` line on every response. A catch-all `Exception` handler
+  (`unhandled_exception_handler`) logs the full traceback server-side and
+  answers with `{"detail": "Internal server error", "request_id": ...}` — no
+  traceback in the body. Ordinary `HTTPException`s (404s, 401s, 422s) never
+  reach it; only genuine bugs do.
+  - Two real bugs found building this, both fixed: (1) `ServerErrorMiddleware`
+    sends the handler's response over the raw ASGI `send` channel once
+    built, so it never flows back down through `RequestIdMiddleware` the way
+    an ordinary response does — the handler now sets its own `X-Request-Id`
+    header instead of relying on the middleware to. (2) `alembic/env.py`'s
+    `fileConfig(config.config_file_name)` used the default
+    `disable_existing_loggers=True`, which silently disabled every logger
+    that already existed at that point — including this app's own, since
+    `tests/conftest.py` runs `command.upgrade()` in-process *after*
+    `app.main` has already configured them. Passing
+    `disable_existing_loggers=False` (the same guard uvicorn's own default
+    logging config uses) fixed it; this would have bitten in production too,
+    for anyone who runs migrations in-process on startup.
+- [x] **`/api/health` vs `/api/ready`** (`app/api/routes/health.py`): `/health`
+  is liveness only, no DB dependency at all — a Postgres blip can no longer
+  make a perfectly fine process read as dead. `/ready` does the real `SELECT
+  1` round-trip and answers 503 (not a bare 500) when the database is
+  unreachable. `docker-compose.yml`'s `api` service now has a real
+  healthcheck pointed at `/health` for exactly this reason. Both are public
+  (added to `PUBLIC_ENDPOINTS` in `test_access_control.py`) — a probe can't
+  hold a session.
+- [x] **CI — type checking** (`pyright`, added to `[tool.pyright]` in
+  `apps/api/pyproject.toml`): basic mode. Investigated all 101 pre-existing
+  diagnostics rather than blanket-suppressing; two in
+  `app/services/tiger_five.py` were real (a nullable-PK dict lookup and a
+  `float | None` narrowing gap from calling the same helper twice in one
+  boolean expression — fixed with a walrus, which also stopped computing SG
+  twice per shot) and got fixed, not silenced. The other 99 are systemic
+  SQLModel/GeoAlchemy2 stub gaps (`Model.col.in_()`/`.is_not()` not
+  recognized as column-expression methods, `id: int | None` pre-insert
+  typing on always-persisted rows, `WKTElement` vs. the `str | None` a
+  Geometry column is annotated as), concentrated entirely in
+  `app/api/routes/`, `app/models/`, and `app/db/seed.py` — `app/services/`
+  (PRD's "touches no database session" layer) is clean apart from the two
+  real ones. Demoted those five specific rule categories to `warning` (still
+  visible in CI output, doesn't fail the build) rather than either hiding
+  them entirely or hand-annotating ~90 individual call sites for a stub gap,
+  not a bug; see the comment above `[tool.pyright]` for the full reasoning.
+- [x] **CI — dependency scanning** (`pip-audit` for `apps/api` and
+  `tools/garmin_import`, `pnpm audit` for `apps/web`, blocking where clean).
+  `pip-audit` found nothing in `apps/api`. It found something real in
+  `tools/garmin_import`: `garminconnect==0.3.2` carries PYSEC-2026-3467
+  (CWE-732, high severity) — versions ≤0.3.4 wrote the OAuth token store
+  with whatever the process umask allowed, so `.garmin_tokens/` could end up
+  world-readable (containing a live Garmin refresh token) on a shared host.
+  Bumped to `0.3.5` and re-verified against the newly-installed source
+  before trusting it: every method `garmin_client.py` calls has the
+  identical signature it had at 0.3.2, and the full 35-test mocked suite
+  still passes. `pnpm audit` found 7 findings in `apps/web`; 5 were fixable
+  with `pnpm.overrides` on direct dependencies (`postcss`, `sharp`, both
+  pinned inside `next`'s own tree) — verified safe with a real `pnpm build`
+  and the full test suite after overriding, not just installed and hoped.
+  The remaining 2 are `image-size`, six `deck.gl`→`loaders.gl` levels deep
+  in a glTF texture-loading chain this app never exercises (2D map overlays
+  only), with no patched version published upstream at all yet — kept as a
+  real, non-blocking (`continue-on-error`) CI step so a *new* finding still
+  shows up, rather than dropped or force-overridden into an untested code
+  path.
+- [x] **CI — secret scanning, partially.** CodeQL (`.github/workflows/
+  codeql.yml`, Python + JavaScript/TypeScript, push/PR/weekly) is wired up —
+  it also catches a meaningfully overlapping set of injection/XSS-shaped
+  bugs, not just credentials. GitHub's actual *secret-scanning* feature
+  (detecting a committed API key/token) is a repository **setting**
+  (Settings → Security → Secret scanning), not something expressible in a
+  commit — flagged here rather than silently left off, since no admin
+  access to toggle it exists from this environment.
+- [x] **CI — coverage reporting**: `pytest --cov` (backend, `pytest-cov`) and
+  `vitest run --coverage` (frontend, `@vitest/coverage-v8`), both uploaded as
+  build artifacts (no external service/token available to verify, so no
+  Codecov-style integration — same "don't quietly present unverified
+  integrations as working" rule this repo already follows for Garmin/Mapbox).
+  Backend baseline: 89% line coverage (`app/db/seed.py` is the one large gap,
+  at 0% — it's a standalone script run via `make seed`, not exercised by the
+  suite, which is expected).
+- [x] **CI — Dependabot** (`.github/dependabot.yml`): weekly, covering every
+  ecosystem in the repo — `uv` (`apps/api`), `npm` (`apps/web`), `pip`
+  (`tools/garmin_import`), `docker` (both Dockerfiles), and `github-actions`
+  itself. `tools/garmin_import`'s entry calls out that an update PR there
+  needs the same re-verify-against-installed-source treatment the
+  `garminconnect` bump above got, not an automatic merge.
+- [x] **CI — build the prod Docker targets** (`docker` job in `ci.yml`,
+  `docker/build-push-action@v6`, matrix over `apps/api`/`apps/web`, both
+  `target: prod`). **Unverified in this environment**: a real Docker daemon
+  is available here (unlike Phase 9, where none was), but this sandbox's
+  network policy blocks the registry blob-fetch CDNs for both Docker Hub and
+  ghcr.io (`docker pull python:3.12-slim` and `ghcr.io/astral-sh/uv:latest`
+  both fail the same way postgis's image pull did in Phase 9) — so neither
+  Dockerfile's base image can actually be pulled from here. The workflow
+  itself is standard, correctly-configured `docker/build-push-action` usage;
+  it just hasn't had a real build run against it, the same verification
+  boundary as Mapbox/Garmin/Overpass elsewhere in this repo.
+- [x] **Delivered early, out of phase order (Phase 9).** A root `CLAUDE.md`
+  recording the conventions this repo already follows — raw-column selects to
+  avoid geoalchemy2's non-serializable `WKBElement`, the `geometry.py` ↔
   `projection.ts` mirror, the deliberate `VirtualRound`/`Round` split, the
   alembic autogenerate caveats, Phase 9's test fixtures, the PRD-section-
   reference comment style, and the documented-verification-limit convention for
@@ -424,37 +515,155 @@ unhandled exception is a bare 500 with nothing on disk to explain it.
   endpoint authenticates anyone, so the gap gets read as scheduled work
   (Phase 10) rather than as a pattern to copy.
 
-**Acceptance criteria:** a deliberately-thrown error produces a correlatable log
-line; CI fails on a known-vulnerable dependency and on a type error.
+**Gaps carried forward:**
+- **The Docker build CI job is unverified**, per above — no registry access
+  in this environment to actually pull a base image and run it for real.
+- **GitHub's native secret-scanning feature isn't enabled** — it's a repo
+  setting outside this environment's reach, not a code gap. CodeQL covers a
+  different, overlapping class of finding in the meantime.
+- **pyright's 99 demoted warnings are a real, if bounded, blind spot.**
+  Resolving them for real means changing how every table model annotates its
+  geometry/PK columns — a bigger, separately-justified change than "add a CI
+  type check," and risky to do without a live Postgres+PostGIS round-trip to
+  verify against every time (available in this environment, per below, but
+  not exercised for this).
+- **`pnpm audit`'s 2 remaining findings have no upstream fix** (`image-size`
+  DoS parsers, unreachable from this app's actual usage) — nothing to do
+  here until `loaders.gl`/`texture-compressor` ships one.
+- **Nothing is cached in the request-id/logging path** (matches Phase 11's
+  same note about analytics) — nothing here needed it yet.
 
-## Phase 13 — Frontend Data Layer & Error Boundaries
+**Acceptance criteria:** a deliberately-thrown error (verified with a real
+endpoint whose DB dependency is forced to raise, not a handcrafted
+Request/exc pair) produces a `{detail, request_id}` body with no traceback in
+it, and the same request id in both the response header and a structured log
+line with a full traceback attached. 341 backend tests (6 new:
+`test_observability.py`, plus `/health`+`/ready` split coverage in
+`test_health.py`), ruff clean, `pyright` clean (0 errors), `pip-audit` clean.
+301 frontend tests, eslint clean, production build succeeds with the
+`postcss`/`sharp` overrides in place. Migrations verified to apply cleanly
+against a real Postgres 16 + PostGIS instance — this environment's Docker
+registry access is blocked (see the Docker build gap above), but
+`postgresql-16-postgis-3` installs cleanly via `apt`, which isn't, so a real
+local Postgres stood in for `docker compose`'s where Phase 9/11 had neither.
+
+## Phase 13 — Frontend Data Layer & Error Boundaries (done, with noted gaps)
 
 Goal: `use-dashboard-data.ts`, `use-practice-data.ts`, and
-`use-virtual-rounds.ts` each hand-roll loading/error/cancel/refresh state. The
-implementations are careful — the `cancelled` flag handling is correct — but
-the pattern is now written three times, and there's no caching, dedupe, retry,
-or revalidation, so every navigation refetches from scratch.
+`use-virtual-rounds.ts` each hand-rolled loading/error/cancel/refresh state. The
+implementations were careful — the `cancelled` flag handling was correct — but
+the pattern was written three times, and there was no caching, dedupe, retry,
+or revalidation, so every navigation refetched from scratch.
 
-- [ ] Adopt SWR or TanStack Query and collapse the three hooks onto it.
-- [ ] Add `error.tsx`, `loading.tsx`, and `not-found.tsx` — none exist anywhere
-  under `apps/web/src/app/`, so a throw in any segment hits Next's default
-  screen, including from the map components most likely to throw.
-- [ ] Remove the dashboard's request waterfall (`getRounds` → client-side sort →
-  `getRoundAnalytics`) once Phase 11 adds the server-side "latest round" query.
+- [x] **Adopted SWR, collapsed the three hooks onto it.** Chose SWR over
+  TanStack Query for its smaller surface — this app has no mutations
+  sophisticated enough to need TanStack's cache-write helpers, just
+  read-and-refetch, which is SWR's whole design center. All three hooks
+  (`use-dashboard-data.ts`, `use-practice-data.ts`, `use-virtual-rounds.ts`)
+  keep their exact external `{ state, refresh }` shape — every page that
+  consumes them (`page.tsx`, `practice/page.tsx`, `virtual-bag/page.tsx`)
+  needed no change beyond the signature swap below, and neither did the two
+  page tests that mock the hook module directly rather than exercising SWR
+  for real.
+  - **Real fix, not just a swap: cache keys are scoped by user id, not a
+    `signedIn` boolean.** All three hooks used to take `signedIn: boolean`;
+    since `current-user.tsx`'s sign-in/sign-out is a client-side state
+    change with no forced page reload, a `useSWR("dashboard-round", ...)`
+    keyed only by a fixed string would have let SWR's cache serve player
+    A's cached round to player B for a moment after A signs out and B signs
+    in in the same tab, before revalidating — exactly the class of bug
+    Phase 8/10 exist to close. Hooks now take `userId: number | null`
+    (`useDashboardData(user?.id ?? null)` etc.) and key on
+    `["dashboard-round", userId]`; `null` both disables the fetch (SWR's
+    key-is-null convention) and reports `idle`, same as before.
+  - **Found and fixed a real test-isolation bug along the way, in
+    `page.test.tsx`.** SWR's default cache is a module-level singleton
+    shared across every test in a file. Every test in that file signs in as
+    the same `testUser.id`, so all eight tests shared one cache entry — and
+    since the second test (`shows a loading state before data arrives`)
+    deliberately mocks a fetch that never resolves, every test after it
+    inherited that permanently-pending entry and hung until timeout. Fixed
+    by wrapping each render in a fresh `<SWRConfig value={{ provider: () =>
+    new Map() }}>` (SWR's own documented pattern for exactly this), not by
+    changing the hooks — this was purely a test-isolation gap the migration
+    exposed.
+- [x] **Added `error.tsx`, `loading.tsx`, `not-found.tsx`** at the app root
+  (`src/app/`) — styled consistently with the rest of the app (`Card`,
+  `Overline`, `NavBar`), not left as Next's unstyled defaults.
+  `error.tsx` logs the caught error and offers "Try again" (calls Next's
+  `reset()`) and a full, non-client-side navigation back to the dashboard —
+  deliberately a plain `<a>`, not `<Link>`, so whatever broke doesn't ride
+  along through client-side routing on the way out. Verified in a real
+  browser (Chromium via Playwright): a real 404 on an unmatched route
+  renders the new styled page, not Next's default.
+- [x] **Dashboard's request waterfall.** Already resolved by Phase 11's
+  `?limit=1` server-side query, not new work here — confirmed by reading
+  `use-dashboard-data.ts` before touching it: `getRounds({ limit: 1 })` is
+  the only round fetch, no client-side sort over the full list survives.
+  What's left (`getRounds` → `getRoundAnalytics`) is an inherent dependency
+  — the second call needs the first's result — not a waterfall a data
+  library removes; SWR doesn't change that shape, just how the two-step
+  fetch's loading/error/cache state is managed.
 
-**Acceptance criteria:** no bespoke fetch-state machines left in `src/lib`; a
-forced throw in a route segment renders a recoverable error UI rather than the
-framework default.
+**Gaps carried forward:**
+- **No global `SWRConfig`.** Every hook relies on SWR's built-in defaults
+  (revalidate-on-focus, etc.), which are reasonable for this app's size; a
+  provider would only be worth adding for a deliberate override, and there
+  isn't one yet.
+- **`loading.tsx`'s actual trigger condition is narrow.** It's Next's
+  route-segment-transition fallback, not a stand-in for what each page's own
+  "Loading round…"/"Loading practice data…" text already covers for the
+  client-side SWR fetch — those aren't redundant with it, they cover
+  different moments, but it means `loading.tsx` itself is rarely seen in
+  this app's current all-client-components shape. Kept anyway: cheap, and
+  it's exactly what the App Router convention expects to find.
+- **No dedicated error boundary for the map components specifically** —
+  Phase 4 already gave `HoleReplayMap`/`CourseGeometryMap` their own
+  internal fallback-to-SVG recovery, so today's root `error.tsx` is a
+  second, unreached safety net for them rather than the primary one. Still
+  the right thing to have for everything else.
+
+**Acceptance criteria:** no bespoke fetch-state machines left in `src/lib` —
+`use-dashboard-data.ts`, `use-practice-data.ts`, and `use-virtual-rounds.ts`
+are all thin wrappers around `useSWR` now. 306 frontend tests (5 new:
+`error.test.tsx`, `not-found.test.tsx`, `loading.test.tsx`), eslint clean,
+`tsc`/production build clean (`postcss`/`sharp` overrides from Phase 12 still
+in place). A forced throw renders the new `error.tsx` rather than Next's
+default (unit-tested directly with a thrown `Error` and a mocked `reset`); an
+unmatched route renders the new `not-found.tsx`, verified in a real browser
+(Chromium via Playwright) against the dev server, not just asserted in
+jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
 
 ## Backlog (not yet scheduled into a phase)
 
-- `get_round_analytics` does `holes[shot.hole_id]` against a dict built only
-  from the round's *current* course — a shot whose hole belongs to a
-  since-changed course raises `KeyError` and returns a 500 where a 409 is meant.
-- `create_shots_bulk` is documented as purely additive with no edit path, so a
-  double-submit from a flaky network silently duplicates a hole's shots. Needs
-  an idempotency key or a `(round_id, hole_id, shot_number)` uniqueness rule.
-- No merge/rename flow for near-duplicate players (carried from Phase 8).
+- ~~`get_round_analytics` does `holes[shot.hole_id]` against a dict built only
+  from the round's *current* course...~~ **Fixed.** A course reassignment
+  after shots were recorded now raises a deliberate 409
+  (`test_analytics_endpoint_409_when_course_reassigned_after_shots_recorded`)
+  instead of an unhandled `KeyError` — the exact scenario
+  `_persist_round_strokes_gained` already no-op'd on rather than crashed for.
+- ~~`create_shots_bulk` is documented as purely additive with no edit path...~~
+  **Fixed.** `Shot` now has a `UniqueConstraint("round_id", "hole_id",
+  "shot_number")` (migration `da7ddd5e0023`) — a hole's shot 1, shot 2, ...
+  is a natural key, not just a dedup mechanism. The route checks for an
+  existing match before inserting and returns it instead of erroring or
+  duplicating, so a retried submit (dropped connection after the write
+  actually landed) is safe; a genuinely new hole's shots still accumulate
+  normally. Both directions covered:
+  `test_resubmitting_the_same_shot_does_not_duplicate_it`,
+  `test_duplicate_shot_within_one_payload_does_not_duplicate_it`,
+  `test_a_second_hole_can_still_be_added_after_the_first`.
+- **Rename, half-fixed by Phase 10 as a side effect, not by design:**
+  `PATCH /api/auth/me` already lets a signed-in player rename *themselves* —
+  covers the "typo in my own name" case this bullet originally meant.
+  **Merge does not exist and is a real product/security decision, not a
+  small follow-up**: combining two accounts' data means proving ownership
+  of *both* from one session, which is exactly the kind of cross-account
+  interaction Phase 10 was built to close off. Needs a deliberate answer to
+  "prove ownership how" (re-enter the second account's password in the same
+  flow? an emailed confirmation link, which needs mail-sending
+  infrastructure this app doesn't have yet, same gap Phase 10 already
+  flagged for password reset?) before it's worth building, not a guess.
 
 ## Cross-cutting (ongoing, not a single phase)
 

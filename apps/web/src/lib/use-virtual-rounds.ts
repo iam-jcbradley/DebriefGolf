@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import useSWR from "swr";
 import { ApiError, getVirtualRounds, type VirtualRound } from "@/lib/api";
 
 export type VirtualRoundsState =
@@ -14,39 +14,29 @@ export interface UseVirtualRounds {
   refresh: () => void;
 }
 
-export function useVirtualRounds(signedIn: boolean): UseVirtualRounds {
-  const [state, setState] = useState<VirtualRoundsState>({ status: "idle" });
-  const [refreshKey, setRefreshKey] = useState(0);
+/** `userId`: scopes the SWR cache key so switching who's signed in (no
+ * forced page reload — see current-user.tsx) can't briefly render the
+ * previous player's cached rounds before revalidating. `null` disables the
+ * fetch entirely. */
+export function useVirtualRounds(userId: number | null): UseVirtualRounds {
+  const { data, error, isLoading, mutate } = useSWR(
+    userId !== null ? ["virtual-rounds", userId] : null,
+    () => getVirtualRounds()
+  );
 
-  useEffect(() => {
-    if (!signedIn) {
-      setState({ status: "idle" });
-      return;
-    }
-    let cancelled = false;
-
-    async function load() {
-      setState({ status: "loading" });
-      try {
-        const rounds = await getVirtualRounds();
-        if (!cancelled) setState({ status: "ready", rounds });
-      } catch (error) {
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: error instanceof ApiError ? error.message : "Failed to load virtual rounds",
-          });
-        }
-      }
-    }
-
-    void load();
-    return () => {
-      cancelled = true;
+  let state: VirtualRoundsState;
+  if (userId === null) {
+    state = { status: "idle" };
+  } else if (error) {
+    state = {
+      status: "error",
+      message: error instanceof ApiError ? error.message : "Failed to load virtual rounds",
     };
-  }, [signedIn, refreshKey]);
+  } else if (isLoading || !data) {
+    state = { status: "loading" };
+  } else {
+    state = { status: "ready", rounds: data };
+  }
 
-  const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
-
-  return { state, refresh };
+  return { state, refresh: () => void mutate() };
 }

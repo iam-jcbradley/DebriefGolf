@@ -24,8 +24,19 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
+#
+# disable_existing_loggers=False: `fileConfig`'s default (True) disables
+# every logger that already exists at this point — normally harmless, since
+# `alembic upgrade head` runs as its own process. But `command.upgrade()`
+# also runs in-process inside the test suite (tests/conftest.py, to build
+# the throwaway test database) *after* `app.main` has already created and
+# configured this app's own loggers (app/core/logging.py) — without this
+# flag, that call silently disabled them (`Logger.disabled = True`) for the
+# rest of the test session, with no error, just log lines that never
+# appeared. Same guard uvicorn's own default logging config uses, and for
+# the same reason.
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # An explicitly-supplied URL wins over DATABASE_URL, so a caller driving
 # alembic programmatically can migrate a database other than the configured
