@@ -13,6 +13,7 @@ data source, and both already exist in the schema (`Hole.tee_location`,
 `Hole.green_center`, `Shot.location`).
 """
 
+import json
 import math
 from dataclasses import dataclass
 
@@ -125,3 +126,14 @@ def green_extent_beyond_point(
         (origin_lateral - v for v in lateral_values if v <= origin_lateral), default=0.0
     )
     return extent_right, extent_left
+
+
+def green_boundary_ring(green_boundary_geojson: str) -> list[LatLng]:
+    """Unwraps a `ST_AsGeoJSON(Hole.green_boundary)` string into its outer
+    ring as `LatLng`s. GeoJSON coordinates are `[lng, lat]`, the reverse of
+    this module's `LatLng(lat, lng)` — shared here so
+    `app/api/routes/rounds.py` and `app/api/routes/courses.py` don't each
+    carry their own copy of the swap.
+    """
+    ring = json.loads(green_boundary_geojson)["coordinates"][0]
+    return [LatLng(lat=lat, lng=lng) for lng, lat in ring]
