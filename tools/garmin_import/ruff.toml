@@ -1,0 +1,8 @@
+# Mirrors apps/api's lint rules (see its pyproject.toml). This directory is a
+# standalone pip/venv project rather than part of the uv workspace, so it needs
+# its own copy rather than inheriting them.
+line-length = 100
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]

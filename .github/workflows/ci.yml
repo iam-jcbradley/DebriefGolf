@@ -45,6 +45,25 @@ jobs:
       - name: Test (pytest)
         run: uv run pytest
 
+  # Standalone pip project, outside the uv workspace and the api/web apps —
+  # it had tests from the day it landed but nothing ever ran them.
+  tools:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tools/garmin_import
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt ruff
+      - name: Lint (ruff)
+        run: ruff check .
+      - name: Test (pytest)
+        run: pytest
+
   frontend:
     runs-on: ubuntu-latest
     defaults:

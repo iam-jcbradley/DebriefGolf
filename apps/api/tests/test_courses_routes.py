@@ -1,9 +1,7 @@
-import uuid
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from app.main import app
 from app.services.geometry import LatLng
 from app.services.osm_courses import (
     OsmCourseDetail,
@@ -12,12 +10,10 @@ from app.services.osm_courses import (
     OsmLookupError,
 )
 
-client = TestClient(app)
-
 
 def _payload(**overrides) -> dict:
     payload = {
-        "name": f"Test Creek Golf Club {uuid.uuid4()}",
+        "name": "Test Creek Golf Club",
         "city": "Testville",
         "state": "SC",
         "holes": [
@@ -41,7 +37,7 @@ def _payload(**overrides) -> dict:
     return payload
 
 
-def test_create_course_persists_holes_and_geometry() -> None:
+def test_create_course_persists_holes_and_geometry(client: TestClient) -> None:
     response = client.post("/api/courses", json=_payload())
 
     assert response.status_code == 201
@@ -61,7 +57,7 @@ def test_create_course_persists_holes_and_geometry() -> None:
     assert hole_2["green_boundary"] is None
 
 
-def test_create_course_rejects_duplicate_hole_numbers() -> None:
+def test_create_course_rejects_duplicate_hole_numbers(client: TestClient) -> None:
     payload = _payload(
         holes=[
             {"number": 1, "par": 4, "yardage": 400},
@@ -74,11 +70,8 @@ def test_create_course_rejects_duplicate_hole_numbers() -> None:
     assert response.status_code == 422
 
 
-def test_create_course_idempotent_on_osm_relation_id() -> None:
-    # Random per run — this is a real Postgres DB shared across test runs
-    # (no rollback-per-test), so a fixed id would collide with a leftover
-    # row from an earlier run.
-    payload = _payload(osm_relation_id=uuid.uuid4().int % 1_000_000_000)
+def test_create_course_idempotent_on_osm_relation_id(client: TestClient) -> None:
+    payload = _payload(osm_relation_id=12345678)
 
     first = client.post("/api/courses", json=payload)
     assert first.status_code == 201
@@ -89,7 +82,7 @@ def test_create_course_idempotent_on_osm_relation_id() -> None:
     assert second.json()["id"] == first_id
 
 
-def test_get_course_returns_holes() -> None:
+def test_get_course_returns_holes(client: TestClient) -> None:
     created = client.post("/api/courses", json=_payload()).json()
 
     response = client.get(f"/api/courses/{created['id']}")
@@ -99,12 +92,12 @@ def test_get_course_returns_holes() -> None:
     assert len(response.json()["holes"]) == 2
 
 
-def test_get_course_404_for_unknown_course() -> None:
+def test_get_course_404_for_unknown_course(client: TestClient) -> None:
     response = client.get("/api/courses/999999")
     assert response.status_code == 404
 
 
-def test_search_osm_returns_summaries() -> None:
+def test_search_osm_returns_summaries(client: TestClient) -> None:
     fake_results = [
         OsmCourseSummary(
             osm_type="way", osm_id=123, name="Pinehurst Creek", city="PI", state="SC",
@@ -123,13 +116,13 @@ def test_search_osm_returns_summaries() -> None:
     ]
 
 
-def test_search_osm_503_on_lookup_error() -> None:
+def test_search_osm_503_on_lookup_error(client: TestClient) -> None:
     with patch("app.api.routes.courses.search_courses", side_effect=OsmLookupError("blocked")):
         response = client.get("/api/courses/search-osm", params={"q": "Pinehurst"})
     assert response.status_code == 503
 
 
-def test_search_osm_geometry_returns_draft_holes() -> None:
+def test_search_osm_geometry_returns_draft_holes(client: TestClient) -> None:
     fake_detail = OsmCourseDetail(
         osm_id=999,
         name="Test Creek GC",
@@ -163,12 +156,12 @@ def test_search_osm_geometry_returns_draft_holes() -> None:
     assert body["holes"][1]["tee_location"] is None
 
 
-def test_search_osm_geometry_rejects_bad_osm_type() -> None:
+def test_search_osm_geometry_rejects_bad_osm_type(client: TestClient) -> None:
     response = client.get("/api/courses/search-osm/bogus/999")
     assert response.status_code == 422
 
 
-def test_search_osm_geometry_503_on_lookup_error() -> None:
+def test_search_osm_geometry_503_on_lookup_error(client: TestClient) -> None:
     with patch(
         "app.api.routes.courses.fetch_course_geometry", side_effect=OsmLookupError("blocked")
     ):
@@ -176,7 +169,7 @@ def test_search_osm_geometry_503_on_lookup_error() -> None:
     assert response.status_code == 503
 
 
-def test_list_courses_includes_created_course() -> None:
+def test_list_courses_includes_created_course(client: TestClient) -> None:
     created = client.post("/api/courses", json=_payload()).json()
 
     response = client.get("/api/courses")

@@ -1,24 +1,18 @@
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
-from app.db.session import engine
-from app.main import app
 from app.models import Round, RoundStatus, User
 
-client = TestClient(app)
 
-
-def _seed_user() -> int:
-    with Session(engine) as session:
-        user = User(email=f"test-upload-{uuid.uuid4()}@example.com", name="Test User")
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return user.id
+def _seed_user(session: Session) -> int:
+    user = User(email="upload@example.com", name="Test User")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user.id
 
 
 class _FakeMessage:
@@ -44,8 +38,10 @@ def _fake_fit_file(record_values: list[dict]) -> MagicMock:
     return fake
 
 
-def test_upload_valid_fit_creates_round_needing_audit() -> None:
-    user_id = _seed_user()
+def test_upload_valid_fit_creates_round_needing_audit(
+    client: TestClient, db_session: Session
+) -> None:
+    user_id = _seed_user(db_session)
     fake_fit = _fake_fit_file(
         [
             {"position_lat": 401_000_000, "position_long": -871_000_000},
@@ -65,15 +61,16 @@ def test_upload_valid_fit_creates_round_needing_audit() -> None:
     assert body["sport"] == "golf"
     assert body["point_count"] == 2
 
-    with Session(engine) as session:
-        round_ = session.get(Round, body["round_id"])
-        assert round_ is not None
-        assert round_.user_id == user_id
-        assert round_.course_id is None
+    round_ = db_session.get(Round, body["round_id"])
+    assert round_ is not None
+    assert round_.user_id == user_id
+    assert round_.course_id is None
 
 
-def test_upload_corrupted_fit_still_creates_round_flagged_casual_practice() -> None:
-    user_id = _seed_user()
+def test_upload_corrupted_fit_still_creates_round_flagged_casual_practice(
+    client: TestClient, db_session: Session
+) -> None:
+    user_id = _seed_user(db_session)
 
     response = client.post(
         f"/api/rounds/upload?user_id={user_id}",
@@ -86,7 +83,7 @@ def test_upload_corrupted_fit_still_creates_round_flagged_casual_practice() -> N
     assert body["point_count"] == 0
 
 
-def test_upload_unknown_user_returns_404() -> None:
+def test_upload_unknown_user_returns_404(client: TestClient) -> None:
     response = client.post(
         "/api/rounds/upload?user_id=999999",
         files={"file": ("round.fit", b"whatever", "application/octet-stream")},
@@ -94,8 +91,10 @@ def test_upload_unknown_user_returns_404() -> None:
     assert response.status_code == 404
 
 
-def test_analytics_for_shot_less_round_reports_needs_shots() -> None:
-    user_id = _seed_user()
+def test_analytics_for_shot_less_round_reports_needs_shots(
+    client: TestClient, db_session: Session
+) -> None:
+    user_id = _seed_user(db_session)
     response = client.post(
         f"/api/rounds/upload?user_id={user_id}",
         files={"file": ("garbage.fit", b"not-a-real-fit-file", "application/octet-stream")},

@@ -1,11 +1,8 @@
-import uuid
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlmodel import Session, select
 
-from app.db.session import engine
-from app.main import app
 from app.models import (
     Course,
     Hole,
@@ -18,35 +15,50 @@ from app.models import (
     User,
 )
 
-client = TestClient(app)
-
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
-def _seed_user() -> int:
-    with Session(engine) as session:
-        user = User(email=f"test-practice-{uuid.uuid4()}@example.com", name="Test User")
-        session.add(user)
-        session.commit()
-        session.refresh(user)
-        return user.id
+def _seed_user(session: Session) -> int:
+    user = User(email="practice@example.com", name="Test User")
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return user.id
 
 
-def _seed_practice_session(user_id: int, shots: list[dict]) -> int:
-    with Session(engine) as session:
-        practice_session = PracticeSession(user_id=user_id, source="R10")
-        session.add(practice_session)
-        session.commit()
-        session.refresh(practice_session)
-        for shot in shots:
-            session.add(PracticeShot(session_id=practice_session.id, **shot))
-        session.commit()
-        return practice_session.id
+def _seed_practice_session(session: Session, user_id: int, shots: list[dict]) -> int:
+    practice_session = PracticeSession(user_id=user_id, source="R10")
+    session.add(practice_session)
+    session.commit()
+    session.refresh(practice_session)
+    for shot in shots:
+        session.add(PracticeShot(session_id=practice_session.id, **shot))
+    session.commit()
+    return practice_session.id
+
+
+def _seed_round_with_one_hole(session: Session, user_id: int, course_name: str) -> tuple[int, int]:
+    """Returns (round_id, hole_id) for a one-hole course this user played."""
+    course = Course(name=course_name)
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
+    session.add(hole)
+    session.commit()
+    session.refresh(hole)
+    round_ = Round(user_id=user_id, course_id=course.id, status=RoundStatus.verified)
+    session.add(round_)
+    session.commit()
+    session.refresh(round_)
+    return round_.id, hole.id
 
 
 class TestUploadPracticeSession:
-    def test_upload_valid_csv_creates_session_and_shots(self) -> None:
-        user_id = _seed_user()
+    def test_upload_valid_csv_creates_session_and_shots(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
         with (FIXTURES_DIR / "launch_monitor.csv").open("rb") as f:
             response = client.post(
                 f"/api/practice/sessions/upload?user_id={user_id}&source=R10",
@@ -58,16 +70,15 @@ class TestUploadPracticeSession:
         assert body["shot_count"] == 3
         assert body["errors"] == []
 
-        with Session(engine) as session:
-            persisted = list(
-                session.exec(
-                    select(PracticeShot).where(PracticeShot.session_id == body["session_id"])
-                ).all()
-            )
+        persisted = list(
+            db_session.exec(
+                select(PracticeShot).where(PracticeShot.session_id == body["session_id"])
+            ).all()
+        )
         assert len(persisted) == 3
         assert {s.club for s in persisted} == {"Driver", "7-Iron", "PW"}
 
-    def test_upload_404s_for_unknown_user(self) -> None:
+    def test_upload_404s_for_unknown_user(self, client: TestClient) -> None:
         with (FIXTURES_DIR / "launch_monitor.csv").open("rb") as f:
             response = client.post(
                 "/api/practice/sessions/upload?user_id=999999&source=R10",
@@ -75,8 +86,10 @@ class TestUploadPracticeSession:
             )
         assert response.status_code == 404
 
-    def test_upload_422s_when_nothing_parses(self) -> None:
-        user_id = _seed_user()
+    def test_upload_422s_when_nothing_parses(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
         response = client.post(
             f"/api/practice/sessions/upload?user_id={user_id}&source=R10",
             files={"file": ("session.csv", b"not,a,valid,header\n1,2,3,4\n", "text/csv")},
@@ -85,8 +98,10 @@ class TestUploadPracticeSession:
 
 
 class TestDeliveryProfileEndpoint:
-    def test_returns_empty_for_user_with_no_sessions(self) -> None:
-        user_id = _seed_user()
+    def test_returns_empty_for_user_with_no_sessions(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
         response = client.get(f"/api/practice/delivery/{user_id}")
         assert response.status_code == 200
         body = response.json()
@@ -94,9 +109,12 @@ class TestDeliveryProfileEndpoint:
         assert body["clubs"] == []
         assert body["sim_vs_real_gapping"] == []
 
-    def test_aggregates_across_sessions_and_computes_gapping_delta(self) -> None:
-        user_id = _seed_user()
+    def test_aggregates_across_sessions_and_computes_gapping_delta(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
         _seed_practice_session(
+            db_session,
             user_id,
             [
                 {"club": "Driver", "smash_factor": 1.48, "carry_yards": 260.0,
@@ -107,25 +125,15 @@ class TestDeliveryProfileEndpoint:
         )
 
         # On-course Driver shots for the Sim vs. Real-World gapping delta.
-        with Session(engine) as session:
-            course = Course(name="Delivery Test Course")
-            session.add(course)
-            session.commit()
-            session.refresh(course)
-            hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
-            session.add(hole)
-            session.commit()
-            session.refresh(hole)
-            round_ = Round(user_id=user_id, course_id=course.id, status=RoundStatus.verified)
-            session.add(round_)
-            session.commit()
-            session.refresh(round_)
-            session.add(
-                Shot(round_id=round_.id, hole_id=hole.id, shot_number=1, club="Driver",
-                     start_lie=Lie.tee, end_lie=Lie.fairway,
-                     start_distance_yards=400, end_distance_yards=400 - 240.0)
-            )
-            session.commit()
+        round_id, hole_id = _seed_round_with_one_hole(
+            db_session, user_id, "Delivery Test Course"
+        )
+        db_session.add(
+            Shot(round_id=round_id, hole_id=hole_id, shot_number=1, club="Driver",
+                 start_lie=Lie.tee, end_lie=Lie.fairway,
+                 start_distance_yards=400, end_distance_yards=400 - 240.0)
+        )
+        db_session.commit()
 
         response = client.get(f"/api/practice/delivery/{user_id}")
 
@@ -144,23 +152,28 @@ class TestDeliveryProfileEndpoint:
 
 
 class TestPracticeCombinesEndpoint:
-    def test_404s_for_unknown_user(self) -> None:
+    def test_404s_for_unknown_user(self, client: TestClient) -> None:
         response = client.get("/api/practice/combines/999999")
         assert response.status_code == 404
 
-    def test_no_weaknesses_for_user_with_no_data(self) -> None:
-        user_id = _seed_user()
+    def test_no_weaknesses_for_user_with_no_data(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
         response = client.get(f"/api/practice/combines/{user_id}")
         assert response.status_code == 200
         body = response.json()
         assert body["weaknesses"] == []
         assert body["combines"] == []
 
-    def test_flags_iron_strike_weakness_from_practice_shots(self) -> None:
+    def test_flags_iron_strike_weakness_from_practice_shots(
+        self, client: TestClient, db_session: Session
+    ) -> None:
         # 7-Iron's expected smash factor is ~1.33 (app/services/practice_combines.py);
         # 3+ shots meaningfully below that for one club is enough to flag.
-        user_id = _seed_user()
+        user_id = _seed_user(db_session)
         _seed_practice_session(
+            db_session,
             user_id,
             [
                 {"club": "7-Iron", "smash_factor": 1.15},
@@ -178,29 +191,21 @@ class TestPracticeCombinesEndpoint:
         combine_names = {c["name"] for c in body["combines"]}
         assert "Low-Point Compression" in combine_names
 
-    def test_flags_approach_weakness_from_on_course_shots(self) -> None:
-        user_id = _seed_user()
-        with Session(engine) as session:
-            course = Course(name="Combines Test Course")
-            session.add(course)
-            session.commit()
-            session.refresh(course)
-            hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
-            session.add(hole)
-            session.commit()
-            session.refresh(hole)
-            round_ = Round(user_id=user_id, course_id=course.id, status=RoundStatus.verified)
-            session.add(round_)
-            session.commit()
-            session.refresh(round_)
-            for i in range(5):
-                session.add(
-                    Shot(round_id=round_.id, hole_id=hole.id, shot_number=i + 1, club="9-Iron",
-                         start_lie=Lie.fairway, end_lie=Lie.sand,
-                         start_distance_yards=110, end_distance_yards=15,
-                         strokes_gained=-0.6)
-                )
-            session.commit()
+    def test_flags_approach_weakness_from_on_course_shots(
+        self, client: TestClient, db_session: Session
+    ) -> None:
+        user_id = _seed_user(db_session)
+        round_id, hole_id = _seed_round_with_one_hole(
+            db_session, user_id, "Combines Test Course"
+        )
+        for i in range(5):
+            db_session.add(
+                Shot(round_id=round_id, hole_id=hole_id, shot_number=i + 1, club="9-Iron",
+                     start_lie=Lie.fairway, end_lie=Lie.sand,
+                     start_distance_yards=110, end_distance_yards=15,
+                     strokes_gained=-0.6)
+            )
+        db_session.commit()
 
         response = client.get(f"/api/practice/combines/{user_id}")
 

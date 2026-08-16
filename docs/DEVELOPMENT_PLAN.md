@@ -148,8 +148,222 @@ Goal: every page up to this point made whoever was using the app retype a raw nu
 
 **Acceptance criteria:** 258 backend tests (10 new: `test_users_routes.py`, plus a `GET /api/rounds?user_id=` filter test in `test_rounds.py`), ruff clean. 306 frontend tests (19 new: `current-user.test.tsx`, `player-switcher-dialog.test.tsx`, `settings-tabs` unaffected, plus new/updated page tests for the dashboard, `/practice`, `/virtual-bag`, `/rounds/new`, `/settings/garmin`, `/settings/privacy`), eslint/tsc clean, production build succeeds (bundle grew ~20kB across every page, expected — the player switcher now mounts globally via `layout.tsx`). Full manual, real-browser (Playwright/Chromium) pass: created a named player from scratch, confirmed it persisted across a reload and resolved automatically on every migrated page with no re-entry, deleted the account and watched the confirmation message actually render (this is what caught the bug above), and forged a stale localStorage entry pointing at a nonexistent user id to confirm the app recovers to "Choose player" instead of getting stuck.
 
+---
+
+# Part II — Hardening (Phases 9-13)
+
+Phases 0-8 built the product surface the PRD describes: ingestion, analytics, the
+hole replay, the Practice Hub, privacy endpoints, player identity. This second
+part comes out of a full-repo review rather than the PRD, and closes the gap
+between "every PRD feature has a screen" and "this is safe to run for someone
+other than its author."
+
+The ordering is deliberate. Phase 9 is an enabling phase — the backend test
+suite currently can't isolate a test from its neighbours, and Phase 10 is the
+first phase where a test asserting "user A *cannot* reach user B's data" has to
+be trustworthy. Everything after 10 is independent and can be reordered freely.
+
+## Phase 9 — Test Foundation & Backend Test Isolation (done, with noted gaps)
+
+Goal: make `make test` work on a clean checkout, and give the backend suite real
+per-test isolation, so the access-control tests Phase 10 depends on can be
+believed. Every route test module built `TestClient(app)` at import time and
+wrote through the real `app.db.session.engine`: 72 of 258 tests failed outright
+without a running Postgres, and the ones that passed shared one mutable database
+with no rollback between them. The `uuid4()` email in nearly every seed helper
+was the workaround for that missing isolation, not a stylistic choice — and
+`test_courses_routes.py` said so in a comment ("a real Postgres DB shared across
+test runs (no rollback-per-test), so a fixed id would collide with a leftover
+row from an earlier run").
+
+- [x] `apps/api/tests/conftest.py`: a `db_session` fixture wrapping each test in
+  an outer transaction that is always rolled back, using SQLAlchemy 2.0's
+  `join_transaction_mode="create_savepoint"` so the `session.commit()` calls
+  inside route handlers still behave normally, and a `client` fixture that binds
+  that same session into the app via `app.dependency_overrides[get_session]` —
+  seeding and the request under test have to share one transaction, or seeded
+  rows are invisible to the handler.
+- [x] **The suite no longer touches the development database at all.** Rollback
+  isolation alone doesn't fix this: rows that were *already there* (from `make
+  seed`, or from every previous run of the un-isolated suite) still break
+  assertions. Found the hard way — the first migrated test failed against a
+  `Zaphod` row an earlier run had committed permanently. The suite now
+  provisions and migrates its own `debrief_golf_test` database, overridable with
+  `TEST_DATABASE_URL`.
+- [x] `alembic/env.py` honours an explicitly-supplied `sqlalchemy_url` over
+  `DATABASE_URL`, so the harness can migrate its own database. Unset for
+  ordinary CLI runs, which behave exactly as before.
+- [x] Actionable failure when Postgres isn't there: a raw
+  `psycopg.OperationalError` is replaced by one message naming `make db-up` and
+  the pure-logic subset. Scoped to the `db_session` fixture, so the 186
+  pure-logic tests (parsers, strokes gained, geometry, combines) still run with
+  no database at all — verified by pointing `DATABASE_URL` at a dead port.
+- [x] All 12 route test modules moved onto the fixtures; no module-level
+  `TestClient(app)` or direct `engine` use is left. Every `uuid4()` seed value
+  is gone, replaced by fixed readable ones, and assertions that had to be vague
+  about shared state got tightened (`GET /api/rounds` now asserts the exact list
+  rather than `any(...)`).
+- [x] `tests/test_isolation.py` proves the guarantee instead of assuming it: one
+  test commits a user, the next asserts the unique email is free again, a third
+  asserts a handler's commit *is* visible mid-test, and a fourth asserts the
+  suite isn't pointed at the development database. Mutation-checked — disabling
+  the rollback makes the second test fail, so it's a real assertion.
+- [x] `make db-up` / `make db-down` (compose `--wait`, so nothing races the
+  server's healthcheck), `test-api` and `migrate` depend on them, and the README
+  describes what actually happens.
+- [x] CI: a `tools` job linting and testing `tools/garmin_import`, which had 16
+  tests from the day it landed and nothing that ever ran them. Added a
+  `ruff.toml` mirroring `apps/api`'s rules, since it's a standalone pip project
+  outside the uv workspace.
+
+**Gaps carried forward:**
+- **`make test` still doesn't cover `tools/garmin_import`** — only CI does. It's
+  a pip/venv project rather than part of the uv workspace, and wiring venv
+  bootstrapping into the Makefile seemed worse than the inconsistency.
+- **Nothing checks models against migrations.** Tests now run on migrated
+  schema, which is the right source of truth, but a model change with no
+  corresponding migration still fails silently in both. An "autogenerate
+  produces an empty diff" check belongs in Phase 12's CI work.
+- **The compose path wasn't exercisable in the environment this phase was built
+  in** (no Docker daemon available). `make db-up`'s compose invocation is
+  unverified; everything downstream of it was verified against a local PostGIS
+  16/3.4 server — the same server and PostGIS versions compose and CI both use.
+
+**Acceptance criteria:** 262 backend tests (4 new, all in `test_isolation.py`),
+green from a dropped database — the suite recreated, migrated, and ran against a
+clean `debrief_golf_test` in one command. ruff clean. Pure-logic tests (41 of
+them, run in isolation) still pass with `DATABASE_URL` pointed at a closed port.
+`alembic upgrade head` from the CLI still targets `DATABASE_URL`. Frontend
+unchanged and unaffected: 306 tests, no source files touched. Suite runtime went
+from 3.47s to 3.53s including provisioning, so isolation cost nothing.
+
+## Phase 10 — Authentication & Authorization
+
+Goal: stop taking the caller's identity from the caller. Every endpoint takes
+`user_id` as a query or path parameter and trusts it, which was a reasonable
+placeholder while the app was a personal dashboard, but Phase 7 built the
+privacy endpoints on top of that placeholder and Phase 8's picker made "acting
+as another named person" a two-click operation. The result is that the GDPR/CCPA
+rights `docs/DATA_PRIVACY.md` commits to are currently granted to everybody:
+
+- `GET /api/users/{user_id}/export` returns any user's email, every round, and
+  every GPS-tagged shot location — walkable by incrementing an integer.
+- `DELETE /api/users/{user_id}` hard-deletes any account, unauthenticated, by
+  design ("a real deletion, not a soft flag").
+- `GET /api/users?q=` enumerates real names; `GET /api/users/{id}` then returns
+  that user's email and handicap. The search endpoint's deliberate `{id, name}`
+  narrowing is undone by the fetch endpoint next to it.
+- `GET /api/rounds` with no `user_id` still returns every round in the database.
+
+- [ ] A real session: credential storage, login/logout, and a signed
+  session cookie. Scope it to what this app actually is — a small
+  single-household deployment — rather than importing a full identity provider.
+- [ ] A `current_user` FastAPI dependency, and every `user_id` parameter derived
+  from it instead of from the request. Where an endpoint legitimately addresses
+  another user's row (none today), that becomes an explicit authorization check.
+- [ ] Ownership checks on every round-scoped and session-scoped route: a round
+  id belonging to another user is a 404, not a payload.
+- [ ] Refuse to boot with the default `SECRET_KEY` when `env != "development"` —
+  it signs the Garmin OAuth state token and would sign session cookies too.
+- [ ] Encrypt the Garmin `access_token`/`refresh_token` columns at rest, or
+  document explicitly why plaintext is accepted.
+- [ ] Tighten CORS off `allow_methods=["*"] / allow_headers=["*"]` once the
+  cookie flow fixes the real method and header set.
+- [ ] Frontend: a login screen, and `CurrentUserProvider` reading the session
+  instead of localStorage. The player switcher becomes account switching, and
+  the `localStorage` id becomes a hint, not an identity.
+
+**Acceptance criteria:** every endpoint that touches user data rejects an
+unauthenticated request; a test per privacy endpoint proving user A gets a
+404/403 for user B's data (this is the suite that needs Phase 9's isolation).
+Phase 8's "still no real authentication" gap closes, and PRD §1.3's non-goal is
+updated to match.
+
+## Phase 11 — Performance & Scale
+
+Goal: the query patterns are all correct and all shaped for a demo dataset.
+Fix them before there's production data to migrate around.
+
+- [ ] Index the columns every query filters on: `round.user_id`,
+  `shot.round_id`, `shot.hole_id`, `hole.course_id`. The initial migration
+  created these FKs without indexes; later migrations did index
+  `practice_session.user_id` and `practice_shot.session_id`, so this is an
+  oversight in the original tables, not a policy.
+- [ ] Replace the two-step `SELECT round.id WHERE user_id` → `WHERE round_id IN
+  (...)` pattern with joins (`bag.py`, `practice.py` ×2, `privacy.py`). Two
+  round trips and an unbounded `IN` list per request today.
+- [ ] `GET /rounds/{id}/analytics` recomputes strokes gained and writes it back
+  to every shot on every call — a non-idempotent GET on the dashboard's hot
+  path. Compute on shot submission or cache; let the GET read.
+- [ ] `list_round_holes` loads every shot in a round to produce per-hole counts;
+  make it a `GROUP BY`.
+- [ ] Paginate `GET /rounds` and `GET /courses`, and let the dashboard ask for
+  the most recent round via `ORDER BY played_at DESC LIMIT 1` instead of sorting
+  the full list client-side.
+- [ ] Cap upload size on `POST /rounds/upload` and
+  `POST /practice/sessions/upload` — both `await file.read()` the whole body
+  into memory with no limit, no content-type check, and no rate limit.
+- [ ] FK `ondelete="CASCADE"` so `privacy.py`'s deletion stops loading every
+  child row into Python to delete it one at a time.
+
+**Acceptance criteria:** a seeded benchmark (hundreds of rounds, tens of
+thousands of shots) where the dashboard and Smart Bag endpoints stay flat rather
+than degrading linearly; an oversized upload rejected with a 413 instead of
+growing the container's RSS.
+
+## Phase 12 — Observability & Operational Readiness
+
+Goal: `grep -rn "import logging" apps/api/app` currently returns nothing. An
+unhandled exception is a bare 500 with nothing on disk to explain it.
+
+- [ ] Structured logging with a request id, and exception handlers that log the
+  traceback while returning a clean error body.
+- [ ] Split `/api/health` (process is up) from `/api/ready` (database reachable)
+  — they're conflated today, so the container reads as dead whenever Postgres
+  blips.
+- [ ] CI: Python type checking (mypy or pyright — `bag.py` already carries a
+  `# type: ignore[arg-type]`, exactly where a checker earns its keep),
+  dependency and secret scanning (Dependabot, CodeQL, `pip-audit`/`pnpm audit`),
+  coverage reporting, and a build of the prod Docker targets, which are never
+  exercised today.
+- [ ] A `CLAUDE.md` recording the conventions this repo already follows —
+  raw-column selects to avoid geoalchemy2's non-serializable `WKBElement`, the
+  PRD-section-reference comment style, the phase-per-PR rhythm.
+
+**Acceptance criteria:** a deliberately-thrown error produces a correlatable log
+line; CI fails on a known-vulnerable dependency and on a type error.
+
+## Phase 13 — Frontend Data Layer & Error Boundaries
+
+Goal: `use-dashboard-data.ts`, `use-practice-data.ts`, and
+`use-virtual-rounds.ts` each hand-roll loading/error/cancel/refresh state. The
+implementations are careful — the `cancelled` flag handling is correct — but
+the pattern is now written three times, and there's no caching, dedupe, retry,
+or revalidation, so every navigation refetches from scratch.
+
+- [ ] Adopt SWR or TanStack Query and collapse the three hooks onto it.
+- [ ] Add `error.tsx`, `loading.tsx`, and `not-found.tsx` — none exist anywhere
+  under `apps/web/src/app/`, so a throw in any segment hits Next's default
+  screen, including from the map components most likely to throw.
+- [ ] Remove the dashboard's request waterfall (`getRounds` → client-side sort →
+  `getRoundAnalytics`) once Phase 11 adds the server-side "latest round" query.
+
+**Acceptance criteria:** no bespoke fetch-state machines left in `src/lib`; a
+forced throw in a route segment renders a recoverable error UI rather than the
+framework default.
+
+## Backlog (not yet scheduled into a phase)
+
+- `get_round_analytics` does `holes[shot.hole_id]` against a dict built only
+  from the round's *current* course — a shot whose hole belongs to a
+  since-changed course raises `KeyError` and returns a 500 where a 409 is meant.
+- `create_shots_bulk` is documented as purely additive with no edit path, so a
+  double-submit from a flaky network silently duplicates a hole's shots. Needs
+  an idempotency key or a `(round_id, hole_id, shot_number)` uniqueness rule.
+- No merge/rename flow for near-duplicate players (carried from Phase 8).
+
 ## Cross-cutting (ongoing, not a single phase)
 
-- **Data privacy:** delivered as Phase 7 — see [`docs/DATA_PRIVACY.md`](./DATA_PRIVACY.md) for the remaining non-engineering gap (legal review of the user-facing notice).
-- **Player identity:** delivered as Phase 8 above — still not real authentication, by design; see that phase's gaps.
+- **Data privacy:** delivered as Phase 7 — see [`docs/DATA_PRIVACY.md`](./DATA_PRIVACY.md) for the remaining non-engineering gap (legal review of the user-facing notice). The access-control hole that makes those endpoints reachable by anyone is Phase 10.
+- **Player identity:** delivered as Phase 8 above — still not real authentication, by design; Phase 10 is where that gap actually closes.
 - **CI:** keep `.github/workflows/ci.yml` green; add new test suites to the existing `backend`/`frontend` jobs rather than creating parallel pipelines.
