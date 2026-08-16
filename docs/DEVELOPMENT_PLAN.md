@@ -516,8 +516,14 @@ unhandled exception was a bare 500 with nothing on disk to explain it.
   (Phase 10) rather than as a pattern to copy.
 
 **Gaps carried forward:**
-- **The Docker build CI job is unverified**, per above — no registry access
-  in this environment to actually pull a base image and run it for real.
+- ~~**The Docker build CI job is unverified**, per above — no registry access
+  in this environment to actually pull a base image and run it for real.~~
+  **Verified, the hard way.** The first real GitHub Actions run against this
+  job (PR #21) failed outright — not the registry-access limit predicted
+  above, but `docker/build-push-action@v6`'s `cache-to: type=gha` silently
+  requiring the `docker-container` buildx driver, which this job never
+  switched to. Fixed by adding a `docker/setup-buildx-action@v3` step; see
+  `docs/KNOWN_ISSUES.md`.
 - **GitHub's native secret-scanning feature isn't enabled** — it's a repo
   setting outside this environment's reach, not a code gap. CodeQL covers a
   different, overlapping class of finding in the meantime.

@@ -90,3 +90,18 @@ deleted, so the history of what broke and why is still here later.
   wrapped by hand. `ruff check .` now passes clean across the whole
   `apps/api` tree, verified directly. *Found by: QA panel gut-check,
   2026-08-16. Fixed: 2026-08-16.*
+
+- ~~**The `docker` CI job fails outright, every time, on both matrix legs.**
+  `.github/workflows/ci.yml`'s `docker` job passes `cache-to:
+  type=gha,mode=max` to `docker/build-push-action@v6` without ever adding a
+  `docker/setup-buildx-action` step, so the build runs on the default
+  `docker` buildx driver — which can't export a GHA cache at all: "Cache
+  export is not supported for the docker driver." This isn't the
+  registry-access sandbox limit `DEVELOPMENT_PLAN.md`'s Phase 12 entry
+  predicted; it's a real workflow bug, on `main`, that fails this job for
+  every PR. `docs/DEVELOPMENT_PLAN.md` claimed this job as done in Phase
+  12; it had never actually run to completion once.~~ **Fixed.** Added
+  `docker/setup-buildx-action@v3` before the build step. Found and fixed
+  live against a real PR (#21)'s first CI run, not a local check — the kind
+  of thing that only surfaces by actually running the workflow for real.
+  *Found by: PR #21's CI run, 2026-08-16. Fixed: 2026-08-16.*
