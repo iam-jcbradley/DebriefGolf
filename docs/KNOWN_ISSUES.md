@@ -105,3 +105,17 @@ deleted, so the history of what broke and why is still here later.
   live against a real PR (#21)'s first CI run, not a local check — the kind
   of thing that only surfaces by actually running the workflow for real.
   *Found by: PR #21's CI run, 2026-08-16. Fixed: 2026-08-16.*
+
+- ~~**`apps/web/Dockerfile`'s `prod` stage always failed:
+  `COPY --from=build /app/public ./public` — `apps/web` has no `public/`
+  directory.** This project uses the App Router's own `src/app/favicon.ico`
+  convention, not a `public/` folder, so nothing has ever populated that
+  path. Once the buildx-driver fix above let the build actually run, it got
+  all the way through `pnpm build` (a real, successful `next build`) before
+  failing on this COPY — a second, independent bug stacked behind the
+  first, invisible until the first one was cleared. This Dockerfile has
+  seemingly never produced a working prod image, in any environment that
+  actually ran it to completion.~~ **Fixed.** Removed the `public/` COPY
+  line — there's nothing at that path for any Next.js build here to
+  produce, so there's nothing for the image to copy. *Found by: PR #21's
+  second CI run, 2026-08-16. Fixed: 2026-08-16.*
