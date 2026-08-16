@@ -1,4 +1,3 @@
-import json
 from collections import defaultdict
 from datetime import UTC, datetime
 
@@ -12,7 +11,7 @@ from app.api.deps import CurrentUser, SessionDep
 from app.api.uploads import read_upload
 from app.models import Course, Hole, Lie, Round, RoundHolePin, RoundStatus, Shot, User
 from app.services.approach import HoleGeometryContext, classify_approach_leave
-from app.services.geometry import LatLng
+from app.services.geometry import LatLng, green_boundary_ring
 from app.services.parsers.fit_parser import parse_fit_activity
 from app.services.putting import evaluate_putting
 from app.services.strokes_gained import compute_round_strokes_gained
@@ -117,10 +116,11 @@ def _hole_geometry_contexts(
 
     geometry_by_hole_id: dict[int, HoleGeometryContext] = {}
     for row in geo_rows:
-        green_boundary = None
-        if row.green_boundary_geojson:
-            ring = json.loads(row.green_boundary_geojson)["coordinates"][0]
-            green_boundary = [LatLng(lat=lat, lng=lng) for lng, lat in ring]
+        green_boundary = (
+            green_boundary_ring(row.green_boundary_geojson)
+            if row.green_boundary_geojson
+            else None
+        )
         geometry_by_hole_id[row.id] = HoleGeometryContext(
             tee=LatLng(lat=row.tee_lat, lng=row.tee_lng) if row.tee_lat is not None else None,
             green_center=(
@@ -148,6 +148,33 @@ def _shot_locations(session: Session, round_id: int) -> dict[int, LatLng]:
         ).where(Shot.round_id == round_id, Shot.location.is_not(None))
     ).all()
     return {row.id: LatLng(lat=row.lat, lng=row.lng) for row in rows}
+
+
+def _resolve_round_holes(
+    round_id: int, hole_numbers: set[int], user: User, session: Session
+) -> tuple[Round, dict[int, int | None]]:
+    """Ownership check, course-assignment check, and hole-number resolution
+    shared by both bulk-upsert endpoints below (`create_shots_bulk`,
+    `create_pins_bulk`) — a round with no course assigned yet (409) or a
+    hole number its course doesn't have (422) fails identically for either
+    kind of upsert, so both call this instead of maintaining their own copy.
+
+    Returns the owned round and its `{hole_number: hole_id}` map.
+    """
+    round_ = _owned_round(round_id, user, session)
+    if round_.course_id is None:
+        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
+
+    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
+    hole_id_by_number = {hole.number: hole.id for hole in holes}
+
+    unknown_numbers = sorted(hole_numbers - hole_id_by_number.keys())
+    if unknown_numbers:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
+        )
+    return round_, hole_id_by_number
 
 
 def refresh_user_strokes_gained(session: Session, user: User) -> None:
@@ -275,19 +302,9 @@ def create_shots_bulk(
     shot's club/lie/distances through this endpoint, only to (harmlessly)
     resubmit it unchanged.
     """
-    round_ = _owned_round(round_id, user, session)
-    if round_.course_id is None:
-        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
-
-    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
-    hole_id_by_number = {hole.number: hole.id for hole in holes}
-
-    unknown_numbers = sorted({s.hole_number for s in payload.shots} - hole_id_by_number.keys())
-    if unknown_numbers:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
-        )
+    _, hole_id_by_number = _resolve_round_holes(
+        round_id, {s.hole_number for s in payload.shots}, user, session
+    )
 
     existing_by_key = {
         (shot.hole_id, shot.shot_number): shot
@@ -380,19 +397,9 @@ def create_pins_bulk(
     `RoundHolePin`'s `UniqueConstraint("round_id", "hole_id")` is what makes
     "replace" the only option a resubmit has anyway.
     """
-    round_ = _owned_round(round_id, user, session)
-    if round_.course_id is None:
-        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
-
-    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
-    hole_id_by_number = {hole.number: hole.id for hole in holes}
-
-    unknown_numbers = sorted({p.hole_number for p in payload.pins} - hole_id_by_number.keys())
-    if unknown_numbers:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
-        )
+    _, hole_id_by_number = _resolve_round_holes(
+        round_id, {p.hole_number for p in payload.pins}, user, session
+    )
 
     existing_by_hole_id = {
         pin.hole_id: pin

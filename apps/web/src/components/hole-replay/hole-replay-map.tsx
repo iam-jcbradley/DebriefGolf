@@ -7,6 +7,18 @@ import type { DispersionEllipse, HoleReplay, LatLngPoint } from "@/lib/api";
 
 const ENV_MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
+/**
+ * mapbox-gl's Marker `color` option and paint properties take a literal
+ * color string, not a live CSS value — `var(--primary)` is meaningless to
+ * its own color parser. Reading the custom property's *computed* value
+ * keeps these markers on the same `--primary`/`--status-*` tokens
+ * `HoleReplaySvg` uses directly (STYLE_GUIDE.md: one accent color, no
+ * hardcoded hex), while still tracking the current light/dark theme.
+ */
+function resolveThemeColor(cssVariable: string): string {
+  return getComputedStyle(document.documentElement).getPropertyValue(cssVariable).trim();
+}
+
 export interface HoleReplayMapProps {
   hole: HoleReplay;
   ellipse?: DispersionEllipse | null;
@@ -72,11 +84,16 @@ export function HoleReplayMap({
 
       map.on("load", () => {
         if (!map) return;
-        new mapboxgl.Marker({ color: "#0b0b0b" })
+        const foreground = resolveThemeColor("--foreground");
+        const primary = resolveThemeColor("--primary");
+        const statusGood = resolveThemeColor("--status-good");
+        const statusCritical = resolveThemeColor("--status-critical");
+
+        new mapboxgl.Marker({ color: foreground })
           .setLngLat([hole.tee!.lng, hole.tee!.lat])
           .addTo(map);
         if (hole.green_center) {
-          new mapboxgl.Marker({ color: "#0ca30c" })
+          new mapboxgl.Marker({ color: statusGood })
             .setLngLat([hole.green_center.lng, hole.green_center.lat])
             .addTo(map);
         }
@@ -85,7 +102,7 @@ export function HoleReplayMap({
         // cut. Absent for most rounds, in which case there's nothing to
         // draw and short-siding reasoning falls back to green_center.
         if (hole.pin) {
-          new mapboxgl.Marker({ color: "#c9a227" })
+          new mapboxgl.Marker({ color: primary })
             .setLngLat([hole.pin.lng, hole.pin.lat])
             .addTo(map);
         }
@@ -93,7 +110,7 @@ export function HoleReplayMap({
         const shotsWithLocation = hole.shots.filter((shot) => shot.location !== null);
         for (const shot of shotsWithLocation) {
           new mapboxgl.Marker({
-            color: shot.approach_leave === "short_sided" ? "#d03b3b" : "#2a78d6",
+            color: shot.approach_leave === "short_sided" ? statusCritical : primary,
           })
             .setLngLat([shot.location!.lng, shot.location!.lat])
             .addTo(map);
@@ -118,7 +135,7 @@ export function HoleReplayMap({
             id: "shot-path-line",
             type: "line",
             source: "shot-path",
-            paint: { "line-color": "#2a78d6", "line-width": 2 },
+            paint: { "line-color": primary, "line-width": 2 },
           });
         }
       });
