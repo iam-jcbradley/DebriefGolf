@@ -237,47 +237,83 @@ them, run in isolation) still pass with `DATABASE_URL` pointed at a closed port.
 unchanged and unaffected: 306 tests, no source files touched. Suite runtime went
 from 3.47s to 3.53s including provisioning, so isolation cost nothing.
 
-## Phase 10 — Authentication & Authorization
+## Phase 10 — Authentication & Authorization (done, with noted gaps)
 
-Goal: stop taking the caller's identity from the caller. Every endpoint takes
-`user_id` as a query or path parameter and trusts it, which was a reasonable
-placeholder while the app was a personal dashboard, but Phase 7 built the
-privacy endpoints on top of that placeholder and Phase 8's picker made "acting
-as another named person" a two-click operation. The result is that the GDPR/CCPA
-rights `docs/DATA_PRIVACY.md` commits to are currently granted to everybody:
+Goal: stop taking the caller's identity from the caller. Every endpoint took
+`user_id` as a query or path parameter and trusted it, which was a reasonable
+placeholder while this was a personal dashboard — but Phase 7 built the privacy
+endpoints on that placeholder and Phase 8's picker made "acting as another named
+person" a two-click operation. The GDPR/CCPA rights `docs/DATA_PRIVACY.md`
+commits to were, in practice, granted to everybody: `GET /api/users/{id}/export`
+returned any account's email, rounds and GPS shot traces to an unauthenticated
+caller walking integers, and `DELETE /api/users/{id}` hard-deleted any account.
 
-- `GET /api/users/{user_id}/export` returns any user's email, every round, and
-  every GPS-tagged shot location — walkable by incrementing an integer.
-- `DELETE /api/users/{user_id}` hard-deletes any account, unauthenticated, by
-  design ("a real deletion, not a soft flag").
-- `GET /api/users?q=` enumerates real names; `GET /api/users/{id}` then returns
-  that user's email and handicap. The search endpoint's deliberate `{id, name}`
-  narrowing is undone by the fetch endpoint next to it.
-- `GET /api/rounds` with no `user_id` still returns every round in the database.
+- [x] **Sessions.** Argon2id password hashing (`argon2-cffi`, OWASP's current
+  first choice) and an HMAC-signed session token in an HttpOnly, SameSite=Lax
+  cookie. `app/core/signing.py` was extracted from the Phase 3 Garmin `state`
+  token, which already had exactly this shape — one signing implementation now
+  serves both.
+- [x] **`CurrentUser` dependency** (`app/api/deps.py`), and every `user_id`
+  parameter across rounds, bag, practice, virtual rounds, privacy, courses and
+  Garmin routes replaced by it. **No endpoint accepts a user id any more** — the
+  capability was removed rather than guarded.
+- [x] **Ownership checks** on every id-addressed route, returning 404 rather than
+  403: a 403 confirms the row exists, which is more than a stranger should learn
+  by guessing integers.
+- [x] `/api/users` is gone entirely, and with it the name-search endpoint that let
+  anyone enumerate other players. `POST /api/auth/register`, `/login`, `/logout`,
+  `GET|PATCH /api/auth/me` replace it; export and delete moved to `/api/me/export`
+  and `DELETE /api/me`, which have no way to name a subject. `PATCH /api/auth/me`
+  also closes a real gap: handicap index feeds the SG benchmark bucket and there
+  was previously no way to set it outside the seed script.
+- [x] **Refuses to boot** on the example `SECRET_KEY` when `ENV != development` —
+  a hard failure at import, not a log line nobody reads.
+- [x] **Garmin tokens encrypted at rest** (Fernet, key derived from `SECRET_KEY`
+  with domain separation). The columns are renamed `*_encrypted` so a plaintext
+  token assigned to one reads as a bug. The migration deletes existing rows
+  rather than encrypting them in place: anything written before this point sat in
+  the clear in the database and every backup of it, so those tokens should be
+  considered exposed and re-obtained, which costs one click.
+- [x] CORS narrowed from `allow_methods=["*"] / allow_headers=["*"]` to what the
+  frontend actually sends, plus `allow_credentials` for the cookie.
+- [x] **Frontend rebuilt on sessions**: a `/login` screen (sign in + create
+  account), `CurrentUserProvider` reading `GET /api/auth/me` instead of
+  localStorage, the player-switcher dialog deleted, credentialed fetches, and
+  `SignedOut` replacing `NoPlayerSelected` on every player-scoped page. The
+  upload/form components no longer take a `userId` prop — they have no say in
+  whose data it is.
+- [x] **`tests/test_access_control.py`**: enumerates the live API surface from the
+  OpenAPI schema and asserts every endpoint 401s without a session, so a route
+  added without `CurrentUser` fails the suite by default rather than needing
+  someone to remember to test it. Plus per-resource cross-user denial, and
+  explicit tests that the two endpoints this phase existed to fix now return only
+  the caller's own data.
 
-- [ ] A real session: credential storage, login/logout, and a signed
-  session cookie. Scope it to what this app actually is — a small
-  single-household deployment — rather than importing a full identity provider.
-- [ ] A `current_user` FastAPI dependency, and every `user_id` parameter derived
-  from it instead of from the request. Where an endpoint legitimately addresses
-  another user's row (none today), that becomes an explicit authorization check.
-- [ ] Ownership checks on every round-scoped and session-scoped route: a round
-  id belonging to another user is a 404, not a payload.
-- [ ] Refuse to boot with the default `SECRET_KEY` when `env != "development"` —
-  it signs the Garmin OAuth state token and would sign session cookies too.
-- [ ] Encrypt the Garmin `access_token`/`refresh_token` columns at rest, or
-  document explicitly why plaintext is accepted.
-- [ ] Tighten CORS off `allow_methods=["*"] / allow_headers=["*"]` once the
-  cookie flow fixes the real method and header set.
-- [ ] Frontend: a login screen, and `CurrentUserProvider` reading the session
-  instead of localStorage. The player switcher becomes account switching, and
-  the `localStorage` id becomes a hint, not an identity.
+**Gaps carried forward:**
+- **Sessions are stateless, so there's no server-side revocation.** Logout clears
+  the cookie, but a token already copied out of a browser stays valid until it
+  expires; rotating `SECRET_KEY` is the only way to invalidate every outstanding
+  session at once. Right trade at this size, wrong one for multi-tenant — that
+  would want session rows.
+- **No password reset or change flow.** A forgotten password currently means a
+  new account. Needs an email-sending path this app doesn't have yet.
+- **Pre-Phase-10 accounts can't log in.** `password_hash` is nullable and
+  `verify_password` treats null as "can't log in" rather than "no password
+  needed" — deliberate, but it means existing rows need a password set out of
+  band (or `make seed` re-run) before they're usable.
+- **A session expiring mid-visit surfaces as a page-level error**, not an
+  automatic bounce to `/login`. A 401 interceptor in `apiFetch` belongs with
+  Phase 13's data-layer work.
+- **No rate limiting on login.** Argon2 makes each guess expensive, which is not
+  the same as bounding them. Belongs with Phase 11's upload limits.
 
-**Acceptance criteria:** every endpoint that touches user data rejects an
-unauthenticated request; a test per privacy endpoint proving user A gets a
-404/403 for user B's data (this is the suite that needs Phase 9's isolation).
-Phase 8's "still no real authentication" gap closes, and PRD §1.3's non-goal is
-updated to match.
+**Acceptance criteria:** 329 backend tests (84 new across `test_auth_routes.py`
+and `test_access_control.py`), ruff clean; the access-control enumeration was
+mutation-checked by removing `CurrentUser` from one route and confirming the
+suite fails. 301 frontend tests (6 new for `/login`, `current-user.test.tsx`
+rewritten for sessions), eslint and `tsc --noEmit` clean, production build
+succeeds with `/login` at ~123kB First Load JS. `make seed` prints the demo
+account's credentials, and an unauthenticated `curl /api/rounds` answers 401.
 
 ## Phase 11 — Performance & Scale
 

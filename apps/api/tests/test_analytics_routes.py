@@ -4,15 +4,15 @@ from sqlmodel import Session, select
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 
 
-def _seed_round_with_shots(session: Session) -> tuple[int, int]:
+def _seed_round_with_shots(session: Session, user: User) -> int:
     """One par-4 hole, played tee -> fairway -> green -> holed (a clean par),
-    for a 10-handicap user. Returns (round_id, hole_id)."""
-    user = User(email="analytics@example.com", name="Test User", handicap_index=10.0)
-    course = Course(name="Analytics Test Course")
+    for a 10-handicap user. Returns the round id."""
+    user.handicap_index = 10.0
     session.add(user)
+
+    course = Course(name="Analytics Test Course")
     session.add(course)
     session.commit()
-    session.refresh(user)
     session.refresh(course)
 
     hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
@@ -27,33 +27,35 @@ def _seed_round_with_shots(session: Session) -> tuple[int, int]:
     session.commit()
     session.refresh(round_)
 
-    shots = [
-        Shot(round_id=round_.id, hole_id=hole.id, shot_number=1, club="Driver",
-             start_lie=Lie.tee, end_lie=Lie.fairway,
-             start_distance_yards=400, end_distance_yards=150),
-        Shot(round_id=round_.id, hole_id=hole.id, shot_number=2, club="7-Iron",
-             start_lie=Lie.fairway, end_lie=Lie.green,
-             start_distance_yards=150, end_distance_yards=6.0),
-        Shot(round_id=round_.id, hole_id=hole.id, shot_number=3, club="Putter",
-             start_lie=Lie.green, end_lie=Lie.hole,
-             start_distance_yards=6.0, end_distance_yards=0),
-    ]
-    session.add_all(shots)
+    session.add_all(
+        [
+            Shot(round_id=round_.id, hole_id=hole.id, shot_number=1, club="Driver",
+                 start_lie=Lie.tee, end_lie=Lie.fairway,
+                 start_distance_yards=400, end_distance_yards=150),
+            Shot(round_id=round_.id, hole_id=hole.id, shot_number=2, club="7-Iron",
+                 start_lie=Lie.fairway, end_lie=Lie.green,
+                 start_distance_yards=150, end_distance_yards=6.0),
+            Shot(round_id=round_.id, hole_id=hole.id, shot_number=3, club="Putter",
+                 start_lie=Lie.green, end_lie=Lie.hole,
+                 start_distance_yards=6.0, end_distance_yards=0),
+        ]
+    )
     session.commit()
 
-    return round_.id, hole.id
+    return round_.id
 
 
 def test_analytics_endpoint_returns_expected_shape(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    round_id, _ = _seed_round_with_shots(db_session)
+    round_id = _seed_round_with_shots(db_session, user)
 
-    response = client.get(f"/api/rounds/{round_id}/analytics")
+    response = auth_client.get(f"/api/rounds/{round_id}/analytics")
 
     assert response.status_code == 200
     body = response.json()
     assert body["round_id"] == round_id
+    # The handicap bucket comes from the session user's own handicap index.
     assert body["handicap_bucket"] == 10
     assert "strokes_gained" in body
     assert set(body["strokes_gained"]["by_category"]) == {"OTT", "APP", "ARG", "PUTT"}
@@ -65,11 +67,11 @@ def test_analytics_endpoint_returns_expected_shape(
 
 
 def test_analytics_endpoint_persists_strokes_gained_on_shots(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    round_id, _ = _seed_round_with_shots(db_session)
+    round_id = _seed_round_with_shots(db_session, user)
 
-    client.get(f"/api/rounds/{round_id}/analytics")
+    auth_client.get(f"/api/rounds/{round_id}/analytics")
 
     shots = db_session.exec(
         select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)
@@ -77,6 +79,6 @@ def test_analytics_endpoint_persists_strokes_gained_on_shots(
     assert all(s.strokes_gained is not None for s in shots)
 
 
-def test_analytics_endpoint_404_for_unknown_round(client: TestClient) -> None:
-    response = client.get("/api/rounds/999999/analytics")
+def test_analytics_endpoint_404_for_unknown_round(auth_client: TestClient) -> None:
+    response = auth_client.get("/api/rounds/999999/analytics")
     assert response.status_code == 404

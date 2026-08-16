@@ -5,21 +5,20 @@ from sqlmodel import Session, select
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 
 
-def _seed_user_and_course(session: Session) -> tuple[int, int]:
-    user = User(email="rounds@example.com", name="Test User")
+def _seed_course(session: Session) -> int:
     course = Course(name="Test Course")
-    session.add(user)
     session.add(course)
     session.commit()
-    session.refresh(user)
     session.refresh(course)
-    return user.id, course.id
+    return course.id
 
 
-def _seed_one_round(session: Session) -> int:
-    user_id, course_id = _seed_user_and_course(session)
+def _seed_one_round(session: Session, user: User) -> int:
     round_ = Round(
-        user_id=user_id, course_id=course_id, total_score=90, status=RoundStatus.verified
+        user_id=user.id,
+        course_id=_seed_course(session),
+        total_score=90,
+        status=RoundStatus.verified,
     )
     session.add(round_)
     session.commit()
@@ -27,9 +26,9 @@ def _seed_one_round(session: Session) -> int:
     return round_.id
 
 
-def _seed_round_with_two_holes(session: Session) -> tuple[int, int, int]:
-    """Returns (round_id, course_id, user_id) for a round with holes 1 and 2."""
-    user_id, course_id = _seed_user_and_course(session)
+def _seed_round_with_two_holes(session: Session, user: User) -> tuple[int, int]:
+    """Returns (round_id, course_id) for a round with holes 1 and 2."""
+    course_id = _seed_course(session)
     session.add_all(
         [
             Hole(course_id=course_id, number=1, par=4, yardage=400),
@@ -38,59 +37,39 @@ def _seed_round_with_two_holes(session: Session) -> tuple[int, int, int]:
     )
     session.commit()
 
-    round_ = Round(user_id=user_id, course_id=course_id, status=RoundStatus.needs_audit)
+    round_ = Round(user_id=user.id, course_id=course_id, status=RoundStatus.needs_audit)
     session.add(round_)
     session.commit()
     session.refresh(round_)
-    return round_.id, course_id, user_id
+    return round_.id, course_id
 
 
-def test_list_rounds_includes_seeded_round(client: TestClient, db_session: Session) -> None:
-    round_id = _seed_one_round(db_session)
+def test_list_rounds_returns_only_the_callers_rounds(
+    auth_client: TestClient, db_session: Session, user: User, other_user: User
+) -> None:
+    mine = _seed_one_round(db_session, user)
+    theirs = _seed_one_round(db_session, other_user)
 
-    response = client.get("/api/rounds")
-
-    assert response.status_code == 200
-    # Exactly one: this test's transaction is the only thing in scope.
-    assert [r["id"] for r in response.json()] == [round_id]
-
-
-def test_list_rounds_filters_by_user_id(client: TestClient, db_session: Session) -> None:
-    user_a, course_id = _seed_user_and_course(db_session)
-    user_b = User(email="other-player@example.com", name="Other User")
-    db_session.add(user_b)
-    db_session.commit()
-    db_session.refresh(user_b)
-
-    round_a = Round(user_id=user_a, course_id=course_id, status=RoundStatus.verified)
-    round_b = Round(user_id=user_b.id, course_id=course_id, status=RoundStatus.verified)
-    db_session.add(round_a)
-    db_session.add(round_b)
-    db_session.commit()
-    db_session.refresh(round_a)
-    db_session.refresh(round_b)
-
-    response = client.get(f"/api/rounds?user_id={user_a}")
+    response = auth_client.get("/api/rounds")
 
     assert response.status_code == 200
-    round_ids = {r["id"] for r in response.json()}
-    assert round_a.id in round_ids
-    assert round_b.id not in round_ids
+    assert [r["id"] for r in response.json()] == [mine]
+    assert theirs not in [r["id"] for r in response.json()]
 
 
-def test_round_shots_404_for_unknown_round(client: TestClient) -> None:
-    response = client.get("/api/rounds/999999/shots")
+def test_round_shots_404_for_unknown_round(auth_client: TestClient) -> None:
+    response = auth_client.get("/api/rounds/999999/shots")
     assert response.status_code == 404
 
 
 def test_round_shots_serializes_a_shot_with_a_gps_location(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
     # Regression test: an earlier version of this endpoint returned raw
     # `Shot` ORM objects, and geoalchemy2 hands back a `WKBElement` for
     # `location` — which isn't JSON-serializable — so any shot with GPS
     # data crashed the response with a 500.
-    round_id, course_id, _ = _seed_round_with_two_holes(db_session)
+    round_id, course_id = _seed_round_with_two_holes(db_session, user)
     hole = db_session.exec(select(Hole).where(Hole.course_id == course_id)).first()
     db_session.add(
         Shot(
@@ -102,7 +81,7 @@ def test_round_shots_serializes_a_shot_with_a_gps_location(
     )
     db_session.commit()
 
-    response = client.get(f"/api/rounds/{round_id}/shots")
+    response = auth_client.get(f"/api/rounds/{round_id}/shots")
 
     assert response.status_code == 200
     body = response.json()
@@ -111,30 +90,29 @@ def test_round_shots_serializes_a_shot_with_a_gps_location(
 
 
 class TestCreateRound:
-    def test_creates_a_round_against_an_existing_course(
-        self, client: TestClient, db_session: Session
+    def test_creates_a_round_owned_by_the_caller(
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id, course_id = _seed_user_and_course(db_session)
+        course_id = _seed_course(db_session)
 
-        response = client.post(
-            "/api/rounds", json={"user_id": user_id, "course_id": course_id}
-        )
+        response = auth_client.post("/api/rounds", json={"course_id": course_id})
 
         assert response.status_code == 201
         body = response.json()
-        assert body["user_id"] == user_id
+        # The round's owner comes from the session, not from the request —
+        # there is no `user_id` field to send any more.
+        assert body["user_id"] == user.id
         assert body["course_id"] == course_id
         assert body["status"] == "needs_audit"  # default
 
     def test_accepts_explicit_played_at_score_and_status(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session
     ) -> None:
-        user_id, course_id = _seed_user_and_course(db_session)
+        course_id = _seed_course(db_session)
 
-        response = client.post(
+        response = auth_client.post(
             "/api/rounds",
             json={
-                "user_id": user_id,
                 "course_id": course_id,
                 "played_at": "2026-01-15T10:00:00Z",
                 "total_score": 82,
@@ -147,28 +125,18 @@ class TestCreateRound:
         assert body["total_score"] == 82
         assert body["status"] == "verified"
 
-    def test_404_for_unknown_user(self, client: TestClient, db_session: Session) -> None:
-        _, course_id = _seed_user_and_course(db_session)
-        response = client.post(
-            "/api/rounds", json={"user_id": 999999, "course_id": course_id}
-        )
-        assert response.status_code == 404
-
-    def test_404_for_unknown_course(self, client: TestClient, db_session: Session) -> None:
-        user_id, _ = _seed_user_and_course(db_session)
-        response = client.post(
-            "/api/rounds", json={"user_id": user_id, "course_id": 999999}
-        )
+    def test_404_for_unknown_course(self, auth_client: TestClient) -> None:
+        response = auth_client.post("/api/rounds", json={"course_id": 999999})
         assert response.status_code == 404
 
 
 class TestCreateShotsBulk:
     def test_creates_shots_resolving_hole_number_to_hole_id(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        round_id, _, _ = _seed_round_with_two_holes(db_session)
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
 
-        response = client.post(
+        response = auth_client.post(
             f"/api/rounds/{round_id}/shots/bulk",
             json={
                 "shots": [
@@ -200,34 +168,30 @@ class TestCreateShotsBulk:
         assert len(body) == 2
         assert body[0]["club"] == "Driver"
 
-        shots = client.get(f"/api/rounds/{round_id}/shots").json()
+        shots = auth_client.get(f"/api/rounds/{round_id}/shots").json()
         assert len(shots) == 2
 
-    def test_404_for_unknown_round(self, client: TestClient) -> None:
-        response = client.post("/api/rounds/999999/shots/bulk", json={"shots": []})
+    def test_404_for_unknown_round(self, auth_client: TestClient) -> None:
+        response = auth_client.post("/api/rounds/999999/shots/bulk", json={"shots": []})
         assert response.status_code == 404
 
     def test_409_when_round_has_no_course(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user = User(email="rounds-nocourse@example.com", name="Test User")
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
         round_ = Round(user_id=user.id, status=RoundStatus.needs_audit)
         db_session.add(round_)
         db_session.commit()
         db_session.refresh(round_)
 
-        response = client.post(f"/api/rounds/{round_.id}/shots/bulk", json={"shots": []})
+        response = auth_client.post(f"/api/rounds/{round_.id}/shots/bulk", json={"shots": []})
         assert response.status_code == 409
 
     def test_422_for_unknown_hole_number(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        round_id, _, _ = _seed_round_with_two_holes(db_session)
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
 
-        response = client.post(
+        response = auth_client.post(
             f"/api/rounds/{round_id}/shots/bulk",
             json={
                 "shots": [

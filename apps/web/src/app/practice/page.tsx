@@ -7,7 +7,7 @@ import { DeliveryProfileTable } from "@/components/practice-hub/delivery-profile
 import { PracticeUpload } from "@/components/practice-hub/practice-upload";
 import { SimVsRealTable } from "@/components/practice-hub/sim-vs-real-table";
 import { NavBar } from "@/components/nav-bar";
-import { NoPlayerSelected } from "@/components/no-player-selected";
+import { SignedOut } from "@/components/signed-out";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
 import { Overline } from "@/components/ui/overline";
@@ -25,7 +25,7 @@ const DeliveryTrendChart = dynamic(
 
 export default function PracticePage() {
   const { user } = useCurrentUser();
-  const { state, refresh } = usePracticeData(user?.id ?? null);
+  const { state, refresh } = usePracticeData(user !== null);
   const [selectedClub, setSelectedClub] = useState<string | null>(null);
 
   const clubsWithTrend = state.status === "ready" ? Object.keys(state.delivery.trend) : [];
@@ -42,7 +42,7 @@ export default function PracticePage() {
 
         {!user ? (
           <div className="mt-8">
-            <NoPlayerSelected description="Choose a player to log practice sessions and see their delivery profile." />
+            <SignedOut description="Sign in to log practice sessions and see your delivery profile." />
           </div>
         ) : (
           <>
@@ -56,7 +56,7 @@ export default function PracticePage() {
                   Logging for <strong className="text-foreground">{user.name}</strong>.
                 </p>
                 <div className="mt-4">
-                  <PracticeUpload userId={user.id} onUploaded={refresh} />
+                  <PracticeUpload onUploaded={refresh} />
                 </div>
               </CardContent>
             </Card>

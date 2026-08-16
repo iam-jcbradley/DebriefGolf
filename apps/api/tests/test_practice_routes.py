@@ -18,14 +18,6 @@ from app.models import (
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
 
-def _seed_user(session: Session) -> int:
-    user = User(email="practice@example.com", name="Test User")
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return user.id
-
-
 def _seed_practice_session(session: Session, user_id: int, shots: list[dict]) -> int:
     practice_session = PracticeSession(user_id=user_id, source="R10")
     session.add(practice_session)
@@ -56,12 +48,11 @@ def _seed_round_with_one_hole(session: Session, user_id: int, course_name: str) 
 
 class TestUploadPracticeSession:
     def test_upload_valid_csv_creates_session_and_shots(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session
     ) -> None:
-        user_id = _seed_user(db_session)
         with (FIXTURES_DIR / "launch_monitor.csv").open("rb") as f:
-            response = client.post(
-                f"/api/practice/sessions/upload?user_id={user_id}&source=R10",
+            response = auth_client.post(
+                "/api/practice/sessions/upload?source=R10",
                 files={"file": ("session.csv", f, "text/csv")},
             )
 
@@ -78,31 +69,17 @@ class TestUploadPracticeSession:
         assert len(persisted) == 3
         assert {s.club for s in persisted} == {"Driver", "7-Iron", "PW"}
 
-    def test_upload_404s_for_unknown_user(self, client: TestClient) -> None:
-        with (FIXTURES_DIR / "launch_monitor.csv").open("rb") as f:
-            response = client.post(
-                "/api/practice/sessions/upload?user_id=999999&source=R10",
-                files={"file": ("session.csv", f, "text/csv")},
-            )
-        assert response.status_code == 404
-
-    def test_upload_422s_when_nothing_parses(
-        self, client: TestClient, db_session: Session
-    ) -> None:
-        user_id = _seed_user(db_session)
-        response = client.post(
-            f"/api/practice/sessions/upload?user_id={user_id}&source=R10",
+    def test_upload_422s_when_nothing_parses(self, auth_client: TestClient) -> None:
+        response = auth_client.post(
+            "/api/practice/sessions/upload?source=R10",
             files={"file": ("session.csv", b"not,a,valid,header\n1,2,3,4\n", "text/csv")},
         )
         assert response.status_code == 422
 
 
 class TestDeliveryProfileEndpoint:
-    def test_returns_empty_for_user_with_no_sessions(
-        self, client: TestClient, db_session: Session
-    ) -> None:
-        user_id = _seed_user(db_session)
-        response = client.get(f"/api/practice/delivery/{user_id}")
+    def test_returns_empty_for_user_with_no_sessions(self, auth_client: TestClient) -> None:
+        response = auth_client.get("/api/practice/delivery")
         assert response.status_code == 200
         body = response.json()
         assert body["session_count"] == 0
@@ -110,12 +87,11 @@ class TestDeliveryProfileEndpoint:
         assert body["sim_vs_real_gapping"] == []
 
     def test_aggregates_across_sessions_and_computes_gapping_delta(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id = _seed_user(db_session)
         _seed_practice_session(
             db_session,
-            user_id,
+            user.id,
             [
                 {"club": "Driver", "smash_factor": 1.48, "carry_yards": 260.0,
                  "spin_axis_deg": -2.0, "club_path_deg": -1.0, "face_angle_deg": 0.5},
@@ -126,7 +102,7 @@ class TestDeliveryProfileEndpoint:
 
         # On-course Driver shots for the Sim vs. Real-World gapping delta.
         round_id, hole_id = _seed_round_with_one_hole(
-            db_session, user_id, "Delivery Test Course"
+            db_session, user.id, "Delivery Test Course"
         )
         db_session.add(
             Shot(round_id=round_id, hole_id=hole_id, shot_number=1, club="Driver",
@@ -135,7 +111,7 @@ class TestDeliveryProfileEndpoint:
         )
         db_session.commit()
 
-        response = client.get(f"/api/practice/delivery/{user_id}")
+        response = auth_client.get("/api/practice/delivery")
 
         assert response.status_code == 200
         body = response.json()
@@ -152,29 +128,21 @@ class TestDeliveryProfileEndpoint:
 
 
 class TestPracticeCombinesEndpoint:
-    def test_404s_for_unknown_user(self, client: TestClient) -> None:
-        response = client.get("/api/practice/combines/999999")
-        assert response.status_code == 404
-
-    def test_no_weaknesses_for_user_with_no_data(
-        self, client: TestClient, db_session: Session
-    ) -> None:
-        user_id = _seed_user(db_session)
-        response = client.get(f"/api/practice/combines/{user_id}")
+    def test_no_weaknesses_for_user_with_no_data(self, auth_client: TestClient) -> None:
+        response = auth_client.get("/api/practice/combines")
         assert response.status_code == 200
         body = response.json()
         assert body["weaknesses"] == []
         assert body["combines"] == []
 
     def test_flags_iron_strike_weakness_from_practice_shots(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
         # 7-Iron's expected smash factor is ~1.33 (app/services/practice_combines.py);
         # 3+ shots meaningfully below that for one club is enough to flag.
-        user_id = _seed_user(db_session)
         _seed_practice_session(
             db_session,
-            user_id,
+            user.id,
             [
                 {"club": "7-Iron", "smash_factor": 1.15},
                 {"club": "7-Iron", "smash_factor": 1.18},
@@ -182,7 +150,7 @@ class TestPracticeCombinesEndpoint:
             ],
         )
 
-        response = client.get(f"/api/practice/combines/{user_id}")
+        response = auth_client.get("/api/practice/combines")
 
         assert response.status_code == 200
         body = response.json()
@@ -192,11 +160,10 @@ class TestPracticeCombinesEndpoint:
         assert "Low-Point Compression" in combine_names
 
     def test_flags_approach_weakness_from_on_course_shots(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id = _seed_user(db_session)
         round_id, hole_id = _seed_round_with_one_hole(
-            db_session, user_id, "Combines Test Course"
+            db_session, user.id, "Combines Test Course"
         )
         for i in range(5):
             db_session.add(
@@ -207,7 +174,7 @@ class TestPracticeCombinesEndpoint:
             )
         db_session.commit()
 
-        response = client.get(f"/api/practice/combines/{user_id}")
+        response = auth_client.get("/api/practice/combines")
 
         assert response.status_code == 200
         weaknesses = {w["weakness"] for w in response.json()["weaknesses"]}

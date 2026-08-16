@@ -4,13 +4,10 @@ from sqlmodel import Session
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 
 
-def _seed_user_with_club_shots(session: Session, driver_carries: list[float]) -> int:
-    user = User(email="bag@example.com", name="Test User")
+def _seed_club_shots(session: Session, user: User, driver_carries: list[float]) -> None:
     course = Course(name="Bag Test Course")
-    session.add(user)
     session.add(course)
     session.commit()
-    session.refresh(user)
     session.refresh(course)
 
     hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
@@ -33,19 +30,17 @@ def _seed_user_with_club_shots(session: Session, driver_carries: list[float]) ->
         )
     session.commit()
 
-    return user.id
-
 
 def test_bag_endpoint_reports_carry_stats_per_club(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    user_id = _seed_user_with_club_shots(db_session, [248.0, 250.0, 252.0, 251.0, 249.0])
+    _seed_club_shots(db_session, user, [248.0, 250.0, 252.0, 251.0, 249.0])
 
-    response = client.get(f"/api/bag/{user_id}")
+    response = auth_client.get("/api/bag")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["user_id"] == user_id
+    assert body["user_id"] == user.id
     assert len(body["clubs"]) == 1
     driver = body["clubs"][0]
     assert driver["club"] == "Driver"
@@ -54,11 +49,11 @@ def test_bag_endpoint_reports_carry_stats_per_club(
 
 
 def test_bag_endpoint_excludes_outlier_from_stats(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    user_id = _seed_user_with_club_shots(db_session, [248.0, 250.0, 252.0, 251.0, 249.0, 400.0])
+    _seed_club_shots(db_session, user, [248.0, 250.0, 252.0, 251.0, 249.0, 400.0])
 
-    response = client.get(f"/api/bag/{user_id}")
+    response = auth_client.get("/api/bag")
 
     driver = response.json()["clubs"][0]
     assert driver["sample_count"] == 5
@@ -66,8 +61,20 @@ def test_bag_endpoint_excludes_outlier_from_stats(
     assert driver["carry_mean_yards"] == 250.0
 
 
-def test_bag_endpoint_empty_for_unknown_user(client: TestClient) -> None:
-    response = client.get("/api/bag/999999")
+def test_bag_endpoint_empty_for_a_user_with_no_shots(
+    auth_client: TestClient, user: User
+) -> None:
+    response = auth_client.get("/api/bag")
 
     assert response.status_code == 200
-    assert response.json() == {"user_id": 999999, "clubs": [], "gaps": []}
+    assert response.json() == {"user_id": user.id, "clubs": [], "gaps": []}
+
+
+def test_bag_endpoint_ignores_another_users_shots(
+    auth_client: TestClient, db_session: Session, other_user: User
+) -> None:
+    _seed_club_shots(db_session, other_user, [248.0, 250.0, 252.0, 251.0, 249.0])
+
+    response = auth_client.get("/api/bag")
+
+    assert response.json()["clubs"] == []

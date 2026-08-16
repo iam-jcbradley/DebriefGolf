@@ -20,40 +20,30 @@ beforeEach(() => {
 });
 
 describe("FitUpload", () => {
-  it("uploads the chosen file for the given user and reports success", async () => {
+  it("uploads the chosen file and reports success", async () => {
     mockUploadFitFile.mockResolvedValue({
       round_id: 5, status: "needs_audit", sport: "golf", point_count: 120,
     });
     const onUploaded = vi.fn();
     const user = userEvent.setup();
 
-    render(<FitUpload userId={7} onUploaded={onUploaded} />);
+    render(<FitUpload onUploaded={onUploaded} />);
     const input = screen.getByLabelText("Upload .FIT file", { selector: "input" });
     await user.upload(input, makeFile());
 
     expect(await screen.findByRole("status")).toHaveTextContent("needs audit");
-    expect(mockUploadFitFile).toHaveBeenCalledWith(7, expect.any(File));
+    expect(mockUploadFitFile).toHaveBeenCalledWith(expect.any(File));
     expect(onUploaded).toHaveBeenCalledWith({
       round_id: 5, status: "needs_audit", sport: "golf", point_count: 120,
     });
   });
 
-  it("shows an error and does not call the API when no user id is set", async () => {
-    const user = userEvent.setup();
-    render(<FitUpload userId={null} />);
-    const input = screen.getByLabelText("Upload .FIT file", { selector: "input" });
-
-    await user.upload(input, makeFile());
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/user id/i);
-    expect(mockUploadFitFile).not.toHaveBeenCalled();
-  });
 
   it("shows the API error message when the upload fails", async () => {
     mockUploadFitFile.mockRejectedValue(new ApiError(404, "User not found"));
     const user = userEvent.setup();
 
-    render(<FitUpload userId={999} />);
+    render(<FitUpload />);
     const input = screen.getByLabelText("Upload .FIT file", { selector: "input" });
     await user.upload(input, makeFile());
 
@@ -65,7 +55,7 @@ describe("FitUpload", () => {
       round_id: 1, status: "casual_practice", sport: null, point_count: 0,
     });
 
-    render(<FitUpload userId={7} />);
+    render(<FitUpload />);
     const dropzone = screen.getByTestId("fit-upload-dropzone");
     const file = makeFile();
 

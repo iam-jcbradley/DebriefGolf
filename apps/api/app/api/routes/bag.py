@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.api.deps import CurrentUser, SessionDep
 from app.models import Hole, Round, Shot
 from app.services.dispersion import compute_dispersion_ellipse
 from app.services.geometry import ShotGeometryRow, compute_lateral_by_club
@@ -38,8 +37,8 @@ def _fetch_shot_geometry_rows(session: Session, round_ids: list[int]) -> list[Sh
     return [ShotGeometryRow(**row._mapping) for row in session.exec(query)]  # type: ignore[arg-type]
 
 
-@router.get("/bag/{user_id}")
-def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.get("/bag")
+def get_smart_bag(user: CurrentUser, session: SessionDep) -> dict:
     """Smart Bag club gapping (PRD §5.3): outlier-filtered carry stats per
     club, aggregated across every round this user has played, plus the
     consecutive-club carry gaps in bag order. Lateral dispersion and a
@@ -48,7 +47,7 @@ def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)
     where the lateral offset comes from).
     """
     round_ids = list(
-        session.exec(select(Round.id).where(Round.user_id == user_id)).all()
+        session.exec(select(Round.id).where(Round.user_id == user.id)).all()
     )
     shots: list[Shot] = []
     if round_ids:
@@ -97,7 +96,7 @@ def get_smart_bag(user_id: int, session: Annotated[Session, Depends(get_session)
         clubs.append(club_payload)
 
     return {
-        "user_id": user_id,
+        "user_id": user.id,
         "clubs": clubs,
         "gaps": [
             {

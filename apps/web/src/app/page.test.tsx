@@ -22,7 +22,7 @@ const mockGetRounds = vi.mocked(getRounds);
 const mockGetRoundAnalytics = vi.mocked(getRoundAnalytics);
 const mockUseCurrentUser = vi.mocked(useCurrentUser);
 
-const testUser = { id: 7, name: "Jane Doe" };
+const testUser = { id: 7, name: "Jane Doe", email: "player@example.com", handicap_index: 0, created_at: "2026-01-01T00:00:00Z" };
 
 const olderRound: RoundSummary = {
   id: 1, played_at: "2026-08-01T00:00:00Z", total_score: 90,
@@ -54,21 +54,25 @@ beforeEach(() => {
   mockUseCurrentUser.mockReturnValue({
     user: testUser,
     loading: false,
-    openPicker: vi.fn(),
-    clearUser: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signOut: vi.fn(),
+    refresh: vi.fn(),
   });
 });
 
 describe("DashboardPage", () => {
-  it("shows the no-player empty state when no player is chosen", () => {
+  it("shows the signed-out empty state when nobody is signed in", () => {
     mockUseCurrentUser.mockReturnValue({
       user: null,
       loading: false,
-      openPicker: vi.fn(),
-      clearUser: vi.fn(),
+      signIn: vi.fn(),
+      signUp: vi.fn(),
+      signOut: vi.fn(),
+      refresh: vi.fn(),
     });
     render(<DashboardPage />);
-    expect(screen.getByText("Choose a player to continue")).toBeInTheDocument();
+    expect(screen.getByText("Sign in to continue")).toBeInTheDocument();
     expect(mockGetRounds).not.toHaveBeenCalled();
   });
 
@@ -84,14 +88,14 @@ describe("DashboardPage", () => {
     expect(await screen.findByText("No rounds logged yet.")).toBeInTheDocument();
   });
 
-  it("fetches rounds scoped to the current player", async () => {
+  it("fetches the signed-in player's rounds", async () => {
     mockGetRounds.mockResolvedValue([recentRound]);
     mockGetRoundAnalytics.mockResolvedValue(readyAnalytics);
 
     render(<DashboardPage />);
 
     await screen.findByText("Round Snapshot");
-    expect(mockGetRounds).toHaveBeenCalledWith(7);
+    expect(mockGetRounds).toHaveBeenCalledWith();
   });
 
   it("fetches analytics for the most recently played round, not the first in the list", async () => {

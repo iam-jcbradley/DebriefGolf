@@ -23,19 +23,22 @@ Flow:
 
 from __future__ import annotations
 
-import base64
-import binascii
 import hashlib
-import hmac
-import json
 import secrets
-import time
 from dataclasses import dataclass
 from urllib.parse import urlencode
 
 import httpx
 
 from app.core.config import settings
+from app.core.signing import (
+    BadSignature,
+    ExpiredToken,
+    MalformedToken,
+    b64url_encode,
+)
+from app.core.signing import decode as decode_signed
+from app.core.signing import encode as encode_signed
 
 # Comfortably longer than a user takes to approve on Garmin's consent screen,
 # short enough that a leaked/replayed state token doesn't stay valid long.
@@ -55,31 +58,17 @@ def _require_configured(*names: str) -> None:
         )
 
 
-def _b64url_encode(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
-
-
-def _b64url_decode(data: str) -> bytes:
-    padded = data + "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode(padded)
-
-
 def generate_pkce_pair() -> tuple[str, str]:
     """Returns `(code_verifier, code_challenge)` for OAuth 2.0 PKCE, S256."""
-    verifier = _b64url_encode(secrets.token_bytes(32))
-    challenge = _b64url_encode(hashlib.sha256(verifier.encode()).digest())
+    verifier = b64url_encode(secrets.token_bytes(32))
+    challenge = b64url_encode(hashlib.sha256(verifier.encode()).digest())
     return verifier, challenge
 
 
-def _sign(payload: bytes) -> str:
-    return _b64url_encode(hmac.new(settings.secret_key.encode(), payload, hashlib.sha256).digest())
-
-
 def _encode_state(user_id: int, code_verifier: str) -> str:
-    payload = json.dumps(
-        {"user_id": user_id, "code_verifier": code_verifier, "exp": time.time() + STATE_TTL_SECONDS}
-    ).encode()
-    return f"{_b64url_encode(payload)}.{_sign(payload)}"
+    return encode_signed(
+        {"user_id": user_id, "code_verifier": code_verifier}, ttl_seconds=STATE_TTL_SECONDS
+    )
 
 
 @dataclass(frozen=True)
@@ -89,24 +78,23 @@ class StatePayload:
 
 
 def decode_state(state: str) -> StatePayload:
+    # The signing/expiry mechanics moved to app/core/signing.py in Phase 10,
+    # when the login session cookie needed the same thing. Only the wording
+    # of the errors is specific to OAuth state.
     try:
-        body, signature = state.split(".", 1)
-        payload = _b64url_decode(body)
-    except (ValueError, binascii.Error) as exc:
+        data = decode_signed(state)
+    except BadSignature as exc:
+        raise GarminOAuthError("State token signature mismatch") from exc
+    except ExpiredToken as exc:
+        raise GarminOAuthError("State token expired") from exc
+    except MalformedToken as exc:
         raise GarminOAuthError("Malformed state token") from exc
 
-    if not hmac.compare_digest(_sign(payload), signature):
-        raise GarminOAuthError("State token signature mismatch")
+    user_id, code_verifier = data.get("user_id"), data.get("code_verifier")
+    if not isinstance(user_id, int) or not isinstance(code_verifier, str):
+        raise GarminOAuthError("Malformed state token payload")
 
-    try:
-        data = json.loads(payload)
-    except json.JSONDecodeError as exc:
-        raise GarminOAuthError("Malformed state token payload") from exc
-
-    if data["exp"] < time.time():
-        raise GarminOAuthError("State token expired")
-
-    return StatePayload(user_id=data["user_id"], code_verifier=data["code_verifier"])
+    return StatePayload(user_id=user_id, code_verifier=code_verifier)
 
 
 @dataclass(frozen=True)

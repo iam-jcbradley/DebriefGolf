@@ -14,12 +14,12 @@ export interface UseVirtualRounds {
   refresh: () => void;
 }
 
-export function useVirtualRounds(userId: number | null): UseVirtualRounds {
+export function useVirtualRounds(signedIn: boolean): UseVirtualRounds {
   const [state, setState] = useState<VirtualRoundsState>({ status: "idle" });
   const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
-    if (userId === null) {
+    if (!signedIn) {
       setState({ status: "idle" });
       return;
     }
@@ -28,7 +28,7 @@ export function useVirtualRounds(userId: number | null): UseVirtualRounds {
     async function load() {
       setState({ status: "loading" });
       try {
-        const rounds = await getVirtualRounds(userId as number);
+        const rounds = await getVirtualRounds();
         if (!cancelled) setState({ status: "ready", rounds });
       } catch (error) {
         if (!cancelled) {
@@ -44,7 +44,7 @@ export function useVirtualRounds(userId: number | null): UseVirtualRounds {
     return () => {
       cancelled = true;
     };
-  }, [userId, refreshKey]);
+  }, [signedIn, refreshKey]);
 
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
 

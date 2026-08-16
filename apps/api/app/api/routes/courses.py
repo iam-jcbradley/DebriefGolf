@@ -1,13 +1,12 @@
 import json
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, HTTPException, Response
 from geoalchemy2.elements import WKTElement
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.api.deps import CurrentUser, SessionDep
 from app.models import Course, Hole
 from app.services.osm_courses import (
     OsmLookupError,
@@ -107,8 +106,13 @@ def _serialize_course(session: Session, course: Course) -> dict:
     }
 
 
+# Courses are shared reference data rather than per-user data, so none of
+# these are scoped to the caller — but they all still require a session.
+# `POST /courses` writes data every user's rounds can reference, and the
+# search endpoints proxy OpenStreetMap's public Overpass API; neither is
+# something to leave open to anonymous callers.
 @router.get("/courses")
-def list_courses(session: Annotated[Session, Depends(get_session)]) -> list[dict]:
+def list_courses(user: CurrentUser, session: SessionDep) -> list[dict]:
     """Course picker list (name/city/state only — fetch /courses/{id} for
     hole geometry)."""
     courses = session.exec(select(Course).order_by(Course.name)).all()
@@ -116,7 +120,7 @@ def list_courses(session: Annotated[Session, Depends(get_session)]) -> list[dict
 
 
 @router.get("/courses/search-osm")
-async def search_osm(q: str) -> list[dict]:
+async def search_osm(q: str, user: CurrentUser) -> list[dict]:
     """Search OpenStreetMap for a course by name (`app/services/osm_courses.py`)
     — a free alternative to hand-placing every point when a course is
     already mapped there. See that module's docstring for coverage caveats
@@ -139,7 +143,7 @@ async def search_osm(q: str) -> list[dict]:
 
 
 @router.get("/courses/search-osm/{osm_type}/{osm_id}")
-async def search_osm_geometry(osm_type: str, osm_id: int) -> dict:
+async def search_osm_geometry(osm_type: str, osm_id: int, user: CurrentUser) -> dict:
     """Fetches hole/tee/green geometry for one OSM search result. Returned
     in a draft shape close to `CourseCreateIn` — the frontend lets the user
     review/fill gaps (missing par, unmatched tee/green, etc.) before
@@ -177,7 +181,7 @@ async def search_osm_geometry(osm_type: str, osm_id: int) -> dict:
 
 
 @router.get("/courses/{course_id}")
-def get_course(course_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+def get_course(course_id: int, user: CurrentUser, session: SessionDep) -> dict:
     course = session.get(Course, course_id)
     if course is None:
         raise HTTPException(status_code=404, detail="Course not found")
@@ -188,7 +192,8 @@ def get_course(course_id: int, session: Annotated[Session, Depends(get_session)]
 def create_course(
     payload: CourseCreateIn,
     response: Response,
-    session: Annotated[Session, Depends(get_session)],
+    user: CurrentUser,
+    session: SessionDep,
 ) -> dict:
     """Manual course creation (PRD §10 Phase 5): a user builds a course by
     hand — or from a reviewed/edited `GET /courses/search-osm` candidate —

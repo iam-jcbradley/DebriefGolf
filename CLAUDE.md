@@ -98,11 +98,24 @@ rows. `tests/test_isolation.py` guards these properties.
 `NavBar` renders on every page and calls `useCurrentUser()`, which throws without
 a `CurrentUserProvider` ancestor.
 
-**There is no authentication.** Every endpoint takes `user_id` as a query or path
-parameter and trusts it — including `GET /api/users/{id}/export` and
-`DELETE /api/users/{id}`. This is a known hole, scheduled as Phase 10, not a
-pattern to extend. Before adding an endpoint that reads user data, check whether
-Phase 10 has landed.
+**Identity comes from the session, never from a request parameter.** An
+endpoint that needs to know who is calling takes `CurrentUser` from
+`app/api/deps.py`; there is deliberately no way to name a different user in a
+request, and no endpoint accepts a `user_id`. Anything addressing a row by id
+(a round, a virtual round) must check ownership and return **404, not 403**, for
+someone else's row — a 403 confirms the row exists. `rounds.py`'s `_owned_round`
+is the pattern.
+
+`tests/test_access_control.py` enumerates the live API surface from the OpenAPI
+schema and asserts every endpoint 401s without a session, so a new route added
+without `CurrentUser` fails the suite until someone adds it to `PUBLIC_ENDPOINTS`
+with a reason. Don't add it there to make the test pass.
+
+**Rotating `SECRET_KEY` invalidates every session and every stored Garmin
+token.** It signs session cookies and the OAuth state token, and derives the
+Fernet key for the encrypted `garmin_connection` columns. This bites in tests
+too: monkeypatching `settings.secret_key` after logging a test client in makes
+every subsequent request 401.
 
 **Integrations that can't be verified here.** Garmin OAuth, the Overpass API, and
 Mapbox are all unreachable from the dev sandbox (Garmin's API also requires a paid

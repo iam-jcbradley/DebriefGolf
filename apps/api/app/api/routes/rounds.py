@@ -1,15 +1,14 @@
 import json
 from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 from geoalchemy2.elements import WKTElement
 from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.api.deps import CurrentUser, SessionDep
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
 from app.services.approach import classify_approach_leave
 from app.services.parsers.fit_parser import parse_fit_activity
@@ -20,23 +19,36 @@ from app.services.tiger_five import evaluate_round
 router = APIRouter()
 
 
+def _owned_round(round_id: int, user: User, session: Session) -> Round:
+    """The round, or 404.
+
+    404 rather than 403 for a round belonging to someone else: a 403 would
+    confirm that a round with this id exists and is simply not yours, which
+    is more than a stranger should be able to learn by guessing integers.
+    """
+    round_ = session.get(Round, round_id)
+    if round_ is None or round_.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Round not found")
+    return round_
+
+
 @router.get("/rounds")
-def list_rounds(
-    session: Annotated[Session, Depends(get_session)], user_id: int | None = None
-) -> list[Round]:
-    """`user_id` is optional only for backward compatibility with any
-    existing caller that wants every round in the database; the frontend
-    dashboard always passes it — an unfiltered list is exactly what let it
-    pick a *different* user's most recent round before player identity
-    was persisted (see `src/lib/use-dashboard-data.ts`)."""
-    query = select(Round)
-    if user_id is not None:
-        query = query.where(Round.user_id == user_id)
-    return list(session.exec(query).all())
+def list_rounds(user: CurrentUser, session: SessionDep) -> list[Round]:
+    """This user's rounds, most recent first.
+
+    Until Phase 10 the `user_id` filter was optional, so an unfiltered call
+    returned every round in the database — which is what once let the
+    dashboard show whichever player's round happened to be newest globally.
+    Scoping is no longer something the caller can opt out of.
+    """
+    return list(
+        session.exec(
+            select(Round).where(Round.user_id == user.id).order_by(Round.played_at.desc())
+        ).all()
+    )
 
 
 class RoundCreateIn(BaseModel):
-    user_id: int
     course_id: int
     played_at: datetime | None = None
     total_score: int | None = None
@@ -44,9 +56,7 @@ class RoundCreateIn(BaseModel):
 
 
 @router.post("/rounds", status_code=201)
-def create_round(
-    payload: RoundCreateIn, session: Annotated[Session, Depends(get_session)]
-) -> Round:
+def create_round(payload: RoundCreateIn, user: CurrentUser, session: SessionDep) -> Round:
     """General round creation (PRD §10 Phase 5) — unlike `POST
     /rounds/upload`, this isn't tied to a `.FIT` file: it's for a round
     entered by hand (against a course that already exists, manually built
@@ -54,13 +64,11 @@ def create_round(
     round data gets in at all since Garmin's OAuth API (Phase 3) turned out
     to require a paid developer account.
     """
-    if session.get(User, payload.user_id) is None:
-        raise HTTPException(status_code=404, detail="User not found")
     if session.get(Course, payload.course_id) is None:
         raise HTTPException(status_code=404, detail="Course not found")
 
     round_ = Round(
-        user_id=payload.user_id,
+        user_id=user.id,
         course_id=payload.course_id,
         played_at=payload.played_at or datetime.now(UTC),
         total_score=payload.total_score,
@@ -95,7 +103,7 @@ class BulkShotsIn(BaseModel):
 
 @router.post("/rounds/{round_id}/shots/bulk", status_code=201)
 def create_shots_bulk(
-    round_id: int, payload: BulkShotsIn, session: Annotated[Session, Depends(get_session)]
+    round_id: int, payload: BulkShotsIn, user: CurrentUser, session: SessionDep
 ) -> list[dict]:
     """Adds shots to a round in one call (PRD §10 Phase 5) — the manual
     entry flow accumulates a hole's shots client-side (same `DraftShot`
@@ -106,9 +114,7 @@ def create_shots_bulk(
     replace anything — there's no manual-entry "edit a submitted round" flow
     yet.
     """
-    round_ = session.get(Round, round_id)
-    if round_ is None:
-        raise HTTPException(status_code=404, detail="Round not found")
+    round_ = _owned_round(round_id, user, session)
     if round_.course_id is None:
         raise HTTPException(status_code=409, detail="Round has no course assigned yet")
 
@@ -171,7 +177,7 @@ def create_shots_bulk(
 
 @router.post("/rounds/upload")
 async def upload_fit_activity(
-    user_id: int, file: UploadFile, session: Annotated[Session, Depends(get_session)]
+    file: UploadFile, user: CurrentUser, session: SessionDep
 ) -> dict:
     """Ingest a Garmin `.FIT` activity file (PRD §4.1, §10 Phase 3): parses
     it with `app.services.parsers.fit_parser`, then creates a `Round` with
@@ -179,15 +185,11 @@ async def upload_fit_activity(
     audit wizard. Per PRD §4.3, a corrupted or coordinate-sparse file still
     creates a round (flagged `casual_practice`), it isn't rejected.
     """
-    user = session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
     contents = await file.read()
     result = parse_fit_activity(contents)
 
     round_ = Round(
-        user_id=user_id,
+        user_id=user.id,
         played_at=result.started_at or datetime.now(UTC),
         status=result.status,
     )
@@ -205,11 +207,9 @@ async def upload_fit_activity(
 
 @router.get("/rounds/{round_id}/shots")
 def list_round_shots(
-    round_id: int, session: Annotated[Session, Depends(get_session)]
+    round_id: int, user: CurrentUser, session: SessionDep
 ) -> list[dict]:
-    round_ = session.get(Round, round_id)
-    if round_ is None:
-        raise HTTPException(status_code=404, detail="Round not found")
+    _owned_round(round_id, user, session)  # 404s unless this round is the caller's
 
     # Selecting raw columns (rather than `select(Shot)`) avoids handing back
     # geoalchemy2's `WKBElement` for `location` — it isn't JSON-serializable,
@@ -253,19 +253,16 @@ def list_round_shots(
 
 @router.get("/rounds/{round_id}/analytics")
 def get_round_analytics(
-    round_id: int, session: Annotated[Session, Depends(get_session)]
+    round_id: int, user: CurrentUser, session: SessionDep
 ) -> dict:
     """Round-level diagnostics (PRD §5, §8): Strokes Gained by category,
     Tiger 5 violations + Clean Card Index, putting mechanics, and a
     per-shot breakdown. Also persists the computed `Shot.strokes_gained`
     back onto each shot.
     """
-    round_ = session.get(Round, round_id)
-    if round_ is None:
-        raise HTTPException(status_code=404, detail="Round not found")
+    round_ = _owned_round(round_id, user, session)
 
-    user = session.get(User, round_.user_id)
-    handicap_index = user.handicap_index if user else 0.0
+    handicap_index = user.handicap_index
 
     shots = list(
         session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
@@ -343,14 +340,12 @@ def get_round_analytics(
 
 @router.get("/rounds/{round_id}/holes")
 def list_round_holes(
-    round_id: int, session: Annotated[Session, Depends(get_session)]
+    round_id: int, user: CurrentUser, session: SessionDep
 ) -> list[dict]:
     """Hole summaries for a round's course (PRD §10 Phase 4), for a hole
     picker in the hole-replay UI. Empty for a round with no course assigned
     yet (see POST /rounds/upload)."""
-    round_ = session.get(Round, round_id)
-    if round_ is None:
-        raise HTTPException(status_code=404, detail="Round not found")
+    round_ = _owned_round(round_id, user, session)
     if round_.course_id is None:
         return []
 
@@ -375,16 +370,14 @@ def list_round_holes(
 
 @router.get("/rounds/{round_id}/holes/{hole_number}/replay")
 def get_hole_replay(
-    round_id: int, hole_number: int, session: Annotated[Session, Depends(get_session)]
+    round_id: int, hole_number: int, user: CurrentUser, session: SessionDep
 ) -> dict:
     """Hole geometry + this round's shots on that hole, for the hole replay
     map (PRD §5.3, §10 Phase 4). Includes each shot's `approach_leave`
     classification (PRD §5.2) so the frontend can raise a short-sided /
     "sucker pin" strategy banner without recomputing it.
     """
-    round_ = session.get(Round, round_id)
-    if round_ is None:
-        raise HTTPException(status_code=404, detail="Round not found")
+    round_ = _owned_round(round_id, user, session)
     if round_.course_id is None:
         raise HTTPException(status_code=409, detail="Round has no course assigned yet")
 

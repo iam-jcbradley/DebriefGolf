@@ -46,8 +46,10 @@ from sqlmodel import Session
 
 from alembic import command
 from app.core.config import settings
+from app.core.security import hash_password
 from app.db.session import get_session
 from app.main import app
+from app.models import User
 
 API_ROOT = Path(__file__).resolve().parent.parent
 
@@ -164,7 +166,12 @@ def db_session(_engine: Engine) -> Iterator[Session]:
 @pytest.fixture
 def client(db_session: Session) -> Iterator[TestClient]:
     """A `TestClient` whose handlers run against `db_session`, so requests
-    and test-body seeding share one rolled-back transaction."""
+    and test-body seeding share one rolled-back transaction.
+
+    Unauthenticated. Since Phase 10 almost every endpoint requires a
+    session, so most tests want `auth_client` — this one is for asserting
+    that the unauthenticated case is rejected.
+    """
 
     def _override_get_session() -> Iterator[Session]:
         yield db_session
@@ -175,3 +182,57 @@ def client(db_session: Session) -> Iterator[TestClient]:
             yield test_client
     finally:
         app.dependency_overrides.pop(get_session, None)
+
+
+# Argon2 is deliberately slow, and a test suite that hashes a password per
+# test pays for it many times over. One shared password lets the fixture
+# below hash once per session instead of once per user.
+TEST_PASSWORD = "correct-horse-battery-staple"
+
+
+@pytest.fixture(scope="session")
+def _test_password_hash() -> str:
+    return hash_password(TEST_PASSWORD)
+
+
+@pytest.fixture
+def make_user(db_session: Session, _test_password_hash: str):
+    """Creates a user who can log in with `TEST_PASSWORD`."""
+
+    def _make(
+        email: str = "player@example.com", name: str = "Test Player", **kwargs
+    ) -> User:
+        user = User(email=email, name=name, password_hash=_test_password_hash, **kwargs)
+        db_session.add(user)
+        db_session.commit()
+        db_session.refresh(user)
+        return user
+
+    return _make
+
+
+@pytest.fixture
+def user(make_user) -> User:
+    return make_user()
+
+
+@pytest.fixture
+def other_user(make_user) -> User:
+    """A second account, for proving one user can't reach another's data."""
+    return make_user(email="someone-else@example.com", name="Other Player")
+
+
+def login_as(client: TestClient, user: User) -> None:
+    """Logs `client` in as `user`; the session cookie sticks to the client's
+    cookie jar for every following request."""
+    response = client.post(
+        "/api/auth/login", json={"email": user.email, "password": TEST_PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+
+
+@pytest.fixture
+def auth_client(client: TestClient, user: User) -> TestClient:
+    """`client`, logged in as the `user` fixture."""
+    login_as(client, user)
+    return client

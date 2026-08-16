@@ -16,7 +16,7 @@ beforeEach(() => {
 });
 
 describe("VirtualRoundForm", () => {
-  it("submits the entered course, platform, and score for the given user", async () => {
+  it("submits the entered course, platform, and score", async () => {
     mockCreate.mockResolvedValue({
       id: 1, user_id: 7, platform: "gspro", course_name: "Pebble Beach",
       played_at: "2026-08-15T00:00:00Z", holes_played: 18, total_score: 82, notes: null,
@@ -24,31 +24,22 @@ describe("VirtualRoundForm", () => {
     const onCreated = vi.fn();
     const user = userEvent.setup();
 
-    render(<VirtualRoundForm userId={7} onCreated={onCreated} />);
+    render(<VirtualRoundForm onCreated={onCreated} />);
     await user.type(screen.getByLabelText(/course/i), "Pebble Beach");
     await user.type(screen.getByLabelText(/total score/i), "82");
     await user.click(screen.getByRole("button", { name: /log round/i }));
 
     expect(mockCreate).toHaveBeenCalledWith({
-      user_id: 7, platform: "gspro", course_name: "Pebble Beach", total_score: 82,
+      platform: "gspro", course_name: "Pebble Beach", total_score: 82,
     });
     expect(await screen.findByRole("button", { name: /log round/i })).toBeEnabled();
     expect(onCreated).toHaveBeenCalled();
   });
 
-  it("shows an error and does not call the API when no user id is set", async () => {
-    const user = userEvent.setup();
-    render(<VirtualRoundForm userId={null} />);
-    await user.type(screen.getByLabelText(/course/i), "Pebble Beach");
-    await user.click(screen.getByRole("button", { name: /log round/i }));
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(/user id/i);
-    expect(mockCreate).not.toHaveBeenCalled();
-  });
 
   it("shows an error when the course name is blank", async () => {
     const user = userEvent.setup();
-    render(<VirtualRoundForm userId={7} />);
+    render(<VirtualRoundForm />);
     await user.click(screen.getByRole("button", { name: /log round/i }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/course name/i);
@@ -59,7 +50,7 @@ describe("VirtualRoundForm", () => {
     mockCreate.mockRejectedValue(new ApiError(404, "User not found"));
     const user = userEvent.setup();
 
-    render(<VirtualRoundForm userId={999} />);
+    render(<VirtualRoundForm />);
     await user.type(screen.getByLabelText(/course/i), "Pebble Beach");
     await user.click(screen.getByRole("button", { name: /log round/i }));
 

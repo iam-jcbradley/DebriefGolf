@@ -19,15 +19,12 @@ from app.models import (
 )
 
 
-def _seed_full_user(session: Session) -> tuple[int, int]:
-    """A user with a round+shot, a practice session+shot, a virtual round,
+def _seed_full_user(session: Session, user: User) -> tuple[int, int]:
+    """Gives `user` a round+shot, a practice session+shot, a virtual round,
     and a Garmin connection — one of everything this endpoint touches."""
-    user = User(email="privacy@example.com", name="Test User")
     course = Course(name="Privacy Test Course")
-    session.add(user)
     session.add(course)
     session.commit()
-    session.refresh(user)
     session.refresh(course)
 
     hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
@@ -61,32 +58,25 @@ def _seed_full_user(session: Session) -> tuple[int, int]:
             total_score=85,
         )
     )
-    session.add(
-        GarminConnection(
-            user_id=user.id, access_token="secret-access", refresh_token="secret-refresh",
-            expires_at=datetime.now(UTC),
-        )
-    )
+    connection = GarminConnection(user_id=user.id, expires_at=datetime.now(UTC))
+    connection.set_tokens("secret-access", "secret-refresh")
+    session.add(connection)
     session.commit()
 
     return user.id, round_.id
 
 
 class TestExportUserData:
-    def test_404s_for_unknown_user(self, client: TestClient) -> None:
-        response = client.get("/api/users/999999/export")
-        assert response.status_code == 404
-
     def test_exports_everything_the_user_owns(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id, round_id = _seed_full_user(db_session)
+        _, round_id = _seed_full_user(db_session, user)
 
-        response = client.get(f"/api/users/{user_id}/export")
+        response = auth_client.get("/api/me/export")
 
         assert response.status_code == 200
         body = response.json()
-        assert body["user"]["id"] == user_id
+        assert body["user"]["id"] == user.id
         assert body["garmin_connected"] is True
         assert len(body["rounds"]) == 1
         assert body["rounds"][0]["id"] == round_id
@@ -98,24 +88,17 @@ class TestExportUserData:
         assert body["virtual_rounds"][0]["course_name"] == "Sim Course"
 
     def test_never_includes_raw_oauth_tokens(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id, _ = _seed_full_user(db_session)
+        _seed_full_user(db_session, user)
 
-        response = client.get(f"/api/users/{user_id}/export")
+        response = auth_client.get("/api/me/export")
 
         assert "secret-access" not in response.text
         assert "secret-refresh" not in response.text
 
-    def test_empty_for_a_user_with_no_data(
-        self, client: TestClient, db_session: Session
-    ) -> None:
-        user = User(email="privacy-empty@example.com", name="Empty User")
-        db_session.add(user)
-        db_session.commit()
-        db_session.refresh(user)
-
-        response = client.get(f"/api/users/{user.id}/export")
+    def test_empty_for_a_user_with_no_data(self, auth_client: TestClient) -> None:
+        response = auth_client.get("/api/me/export")
 
         assert response.status_code == 200
         body = response.json()
@@ -126,16 +109,12 @@ class TestExportUserData:
 
 
 class TestDeleteUserData:
-    def test_404s_for_unknown_user(self, client: TestClient) -> None:
-        response = client.delete("/api/users/999999")
-        assert response.status_code == 404
-
     def test_deletes_the_user_and_everything_they_own(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id, round_id = _seed_full_user(db_session)
+        user_id, round_id = _seed_full_user(db_session, user)
 
-        response = client.delete(f"/api/users/{user_id}")
+        response = auth_client.delete("/api/me")
 
         assert response.status_code == 200
         assert response.json() == {"deleted": True, "user_id": user_id}
@@ -157,20 +136,24 @@ class TestDeleteUserData:
         assert remaining_connection is None
 
     def test_does_not_touch_shared_course_and_hole_data(
-        self, client: TestClient, db_session: Session
+        self, auth_client: TestClient, db_session: Session, user: User
     ) -> None:
-        user_id, round_id = _seed_full_user(db_session)
+        user_id, round_id = _seed_full_user(db_session, user)
         course_id = db_session.get(Round, round_id).course_id
 
-        client.delete(f"/api/users/{user_id}")
+        auth_client.delete("/api/me")
 
         assert db_session.get(Course, course_id) is not None
         assert list(db_session.exec(select(Hole).where(Hole.course_id == course_id)).all()) != []
 
-    def test_get_after_delete_404s(self, client: TestClient, db_session: Session) -> None:
-        user_id, _ = _seed_full_user(db_session)
-        client.delete(f"/api/users/{user_id}")
+    def test_get_after_delete_401s(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        _seed_full_user(db_session, user)
+        auth_client.delete("/api/me")
 
-        response = client.get(f"/api/users/{user_id}/export")
+        # The session cookie is cleared by the delete, and the token would
+        # name a row that no longer exists anyway.
+        response = auth_client.get("/api/me/export")
 
-        assert response.status_code == 404
+        assert response.status_code == 401

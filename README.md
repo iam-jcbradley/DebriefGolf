@@ -30,8 +30,12 @@ Then apply migrations and load a demo round to have something to look at:
 ```bash
 make migrate     # alembic upgrade head
 make seed        # one 18-hole demo round, incl. a few PRD-style diagnostic scenarios
-curl localhost:8000/api/rounds
 ```
+
+`make seed` prints the demo account's login. Sign in at
+http://localhost:3000/login with it (or create your own account) — every
+endpoint that touches player data requires a session, so `curl
+localhost:8000/api/rounds` on its own now answers `401`.
 
 ## Local development (without Docker)
 

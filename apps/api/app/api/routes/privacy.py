@@ -9,20 +9,17 @@ those are shared reference geometry a real course's other players' rounds
 may also reference, so deleting one user's account must not delete them.
 """
 
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Response
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.db.session import get_session
+from app.api.deps import CurrentUser, SessionDep, clear_session_cookie
 from app.models import (
     GarminConnection,
     PracticeSession,
     PracticeShot,
     Round,
     Shot,
-    User,
     VirtualRound,
 )
 
@@ -74,8 +71,8 @@ def _serialize_shots(session: Session, round_ids: list[int]) -> dict[int, list[d
     return by_round
 
 
-@router.get("/users/{user_id}/export")
-def export_user_data(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.get("/me/export")
+def export_user_data(user: CurrentUser, session: SessionDep) -> dict:
     """A user's own data (GDPR/CCPA access & portability, DATA_PRIVACY.md):
     profile, rounds with their shots, R10/R50 practice sessions with their
     shots, and virtual rounds. Deliberately excludes the raw Garmin OAuth
@@ -83,10 +80,7 @@ def export_user_data(user_id: int, session: Annotated[Session, Depends(get_sessi
     behalf, not data *about* the user, so only connection status is
     included.
     """
-    user = session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
+    user_id = user.id
     rounds = list(
         session.exec(select(Round).where(Round.user_id == user_id).order_by(Round.played_at)).all()
     )
@@ -174,8 +168,8 @@ def export_user_data(user_id: int, session: Annotated[Session, Depends(get_sessi
     }
 
 
-@router.delete("/users/{user_id}")
-def delete_user_data(user_id: int, session: Annotated[Session, Depends(get_session)]) -> dict:
+@router.delete("/me")
+def delete_user_data(user: CurrentUser, session: SessionDep, response: Response) -> dict:
     """Real deletion (DATA_PRIVACY.md: "a real deletion..., not a
     soft/hidden flag") of everything this user owns: shots, rounds, R10/R50
     practice shots and sessions, virtual rounds, the Garmin OAuth
@@ -183,10 +177,7 @@ def delete_user_data(user_id: int, session: Annotated[Session, Depends(get_sessi
     order. Shared reference data (`Course`/`Hole`, the SG benchmark table)
     is untouched, since it isn't this user's data to delete.
     """
-    user = session.get(User, user_id)
-    if user is None:
-        raise HTTPException(status_code=404, detail="User not found")
-
+    user_id = user.id
     round_ids = list(session.exec(select(Round.id).where(Round.user_id == user_id)).all())
     if round_ids:
         for shot in session.exec(select(Shot).where(Shot.round_id.in_(round_ids))).all():
@@ -220,5 +211,12 @@ def delete_user_data(user_id: int, session: Annotated[Session, Depends(get_sessi
 
     session.delete(user)
     session.commit()
+
+    # The session token is stateless and outlives the row it names, so
+    # clear the cookie here — otherwise the browser keeps sending a validly
+    # signed session for an account that no longer exists (which
+    # `get_current_user` rejects, but as a confusing 401 rather than a
+    # clean logged-out state).
+    clear_session_cookie(response)
 
     return {"deleted": True, "user_id": user_id}

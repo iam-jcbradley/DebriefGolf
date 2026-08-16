@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCurrentUser } from "@/lib/current-user";
 import { cn } from "@/lib/utils";
 
@@ -25,7 +25,8 @@ function isActive(pathname: string | null, href: string): boolean {
  */
 export function NavBar() {
   const pathname = usePathname();
-  const { user, openPicker } = useCurrentUser();
+  const router = useRouter();
+  const { user, loading, signOut } = useCurrentUser();
 
   return (
     <nav className="flex items-center justify-between border-b border-border px-6 py-5">
@@ -54,13 +55,28 @@ export function NavBar() {
             );
           })}
         </ul>
-        <button
-          type="button"
-          onClick={openPicker}
-          className="overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
-        >
-          {user ? `Playing as ${user.name}` : "Choose player"}
-        </button>
+        {loading ? null : user ? (
+          <div className="flex items-center gap-4">
+            <span className="overline text-muted-foreground">{user.name}</span>
+            <button
+              type="button"
+              onClick={async () => {
+                await signOut();
+                router.push("/login");
+              }}
+              className="overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <Link
+            href="/login"
+            className="overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+          >
+            Sign in
+          </Link>
+        )}
       </div>
     </nav>
   );

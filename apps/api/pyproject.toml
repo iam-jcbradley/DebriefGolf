@@ -4,6 +4,8 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "alembic>=1.19.1",
+    "argon2-cffi>=25.1.0",
+    "cryptography>=50.0.0",
     "fastapi>=0.141.1",
     "fitparse>=1.2.0",
     "geoalchemy2>=0.20.0",

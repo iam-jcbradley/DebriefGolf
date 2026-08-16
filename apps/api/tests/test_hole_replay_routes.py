@@ -20,14 +20,11 @@ def _green_boundary(lat: float, lng: float) -> WKTElement:
     return WKTElement(f"POLYGON(({', '.join(pts)}))", srid=4326)
 
 
-def _seed_round_with_hole_geometry(session: Session) -> tuple[int, int]:
+def _seed_round_with_hole_geometry(session: Session, user: User) -> tuple[int, int]:
     """One hole with real tee/green/shot geometry. Returns (round_id, hole_number)."""
-    user = User(email="replay@example.com", name="Test User")
     course = Course(name="Replay Test Course")
-    session.add(user)
     session.add(course)
     session.commit()
-    session.refresh(user)
     session.refresh(course)
 
     tee_lat, tee_lng = 33.7000, -78.9000
@@ -83,11 +80,11 @@ def _seed_round_with_hole_geometry(session: Session) -> tuple[int, int]:
 
 
 def test_list_round_holes_reports_par_yardage_and_shot_count(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    round_id, hole_number = _seed_round_with_hole_geometry(db_session)
+    round_id, hole_number = _seed_round_with_hole_geometry(db_session, user)
 
-    response = client.get(f"/api/rounds/{round_id}/holes")
+    response = auth_client.get(f"/api/rounds/{round_id}/holes")
 
     assert response.status_code == 200
     body = response.json()
@@ -96,32 +93,30 @@ def test_list_round_holes_reports_par_yardage_and_shot_count(
 
 
 def test_list_round_holes_empty_for_course_less_round(
-    client: TestClient, db_session: Session
+    auth_client: TestClient, db_session: Session, user: User
 ) -> None:
-    user = User(email="replay-nocourse@example.com", name="Test User")
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
     round_ = Round(user_id=user.id, status=RoundStatus.needs_audit)
     db_session.add(round_)
     db_session.commit()
     db_session.refresh(round_)
     round_id = round_.id
 
-    response = client.get(f"/api/rounds/{round_id}/holes")
+    response = auth_client.get(f"/api/rounds/{round_id}/holes")
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_list_round_holes_404_for_unknown_round(client: TestClient) -> None:
-    response = client.get("/api/rounds/999999/holes")
+def test_list_round_holes_404_for_unknown_round(auth_client: TestClient) -> None:
+    response = auth_client.get("/api/rounds/999999/holes")
     assert response.status_code == 404
 
 
-def test_hole_replay_includes_geometry_and_shots(client: TestClient, db_session: Session) -> None:
-    round_id, hole_number = _seed_round_with_hole_geometry(db_session)
+def test_hole_replay_includes_geometry_and_shots(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    round_id, hole_number = _seed_round_with_hole_geometry(db_session, user)
 
-    response = client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
 
     assert response.status_code == 200
     body = response.json()
@@ -137,10 +132,12 @@ def test_hole_replay_includes_geometry_and_shots(client: TestClient, db_session:
     assert body["shots"][3]["location"] is None
 
 
-def test_hole_replay_reports_short_sided_count(client: TestClient, db_session: Session) -> None:
-    round_id, hole_number = _seed_round_with_hole_geometry(db_session)
+def test_hole_replay_reports_short_sided_count(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    round_id, hole_number = _seed_round_with_hole_geometry(db_session, user)
 
-    response = client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
 
     body = response.json()
     # the 7-Iron shot missed the green into rough at 20y — inside the
@@ -150,27 +147,27 @@ def test_hole_replay_reports_short_sided_count(client: TestClient, db_session: S
     assert body["short_sided_count"] == 1
 
 
-def test_hole_replay_404_for_unknown_hole_number(client: TestClient, db_session: Session) -> None:
-    round_id, _ = _seed_round_with_hole_geometry(db_session)
-    response = client.get(f"/api/rounds/{round_id}/holes/99/replay")
+def test_hole_replay_404_for_unknown_hole_number(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    round_id, _ = _seed_round_with_hole_geometry(db_session, user)
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/99/replay")
     assert response.status_code == 404
 
 
-def test_hole_replay_409_for_course_less_round(client: TestClient, db_session: Session) -> None:
-    user = User(email="replay-nocourse2@example.com", name="Test User")
-    db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+def test_hole_replay_409_for_course_less_round(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
     round_ = Round(user_id=user.id, status=RoundStatus.needs_audit)
     db_session.add(round_)
     db_session.commit()
     db_session.refresh(round_)
     round_id = round_.id
 
-    response = client.get(f"/api/rounds/{round_id}/holes/1/replay")
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/1/replay")
     assert response.status_code == 409
 
 
-def test_hole_replay_404_for_unknown_round(client: TestClient) -> None:
-    response = client.get("/api/rounds/999999/holes/1/replay")
+def test_hole_replay_404_for_unknown_round(auth_client: TestClient) -> None:
+    response = auth_client.get("/api/rounds/999999/holes/1/replay")
     assert response.status_code == 404

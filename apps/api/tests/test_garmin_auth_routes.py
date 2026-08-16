@@ -1,19 +1,10 @@
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
-from sqlmodel import Session
 
 from app.core.config import settings
 from app.models import User
 from app.services.garmin_oauth import build_authorize_request
-
-
-def _seed_user(session: Session) -> int:
-    user = User(email="garmin@example.com", name="Test User")
-    session.add(user)
-    session.commit()
-    session.refresh(user)
-    return user.id
 
 
 def _configure_garmin(monkeypatch) -> None:
@@ -24,7 +15,11 @@ def _configure_garmin(monkeypatch) -> None:
     monkeypatch.setattr(
         settings, "garmin_redirect_uri", "http://localhost:8000/api/auth/garmin/callback"
     )
-    monkeypatch.setattr(settings, "secret_key", "test-secret-key")
+    # Deliberately does NOT monkeypatch `secret_key`, unlike the unit tests
+    # in test_garmin_oauth.py. That key signs the session cookie too, so
+    # changing it mid-test invalidates the login `auth_client` already
+    # performed and every request here 401s — the same rotation behaviour
+    # described in app/core/security.py, arrived at the hard way.
 
 
 def _token_response(scope: str | None) -> MagicMock:
@@ -37,45 +32,32 @@ def _token_response(scope: str | None) -> MagicMock:
     return mock_response
 
 
-def test_authorize_returns_url_when_configured(
-    client: TestClient, db_session: Session, monkeypatch
-) -> None:
+def test_authorize_returns_url_when_configured(auth_client: TestClient, monkeypatch) -> None:
     _configure_garmin(monkeypatch)
-    user_id = _seed_user(db_session)
 
-    response = client.get(f"/api/auth/garmin/authorize?user_id={user_id}")
+    response = auth_client.get("/api/auth/garmin/authorize")
 
     assert response.status_code == 200
     assert response.json()["authorize_url"].startswith("https://example.com/oauthConfirm?")
 
 
-def test_authorize_404_for_unknown_user(client: TestClient, monkeypatch) -> None:
-    _configure_garmin(monkeypatch)
-    response = client.get("/api/auth/garmin/authorize?user_id=999999")
-    assert response.status_code == 404
-
-
-def test_authorize_503_when_not_configured(
-    client: TestClient, db_session: Session, monkeypatch
-) -> None:
+def test_authorize_503_when_not_configured(auth_client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(settings, "garmin_client_id", "")
-    user_id = _seed_user(db_session)
 
-    response = client.get(f"/api/auth/garmin/authorize?user_id={user_id}")
+    response = auth_client.get("/api/auth/garmin/authorize")
 
     assert response.status_code == 503
     assert "not configured" in response.json()["detail"]
 
 
 def test_callback_creates_connection_and_redirects(
-    client: TestClient, db_session: Session, monkeypatch
+    auth_client: TestClient, user: User, monkeypatch
 ) -> None:
     _configure_garmin(monkeypatch)
-    user_id = _seed_user(db_session)
-    request = build_authorize_request(user_id)
+    request = build_authorize_request(user.id)
 
     with patch("httpx.AsyncClient.post", return_value=_token_response("ACTIVITY_EXPORT")):
-        response = client.get(
+        response = auth_client.get(
             "/api/auth/garmin/callback",
             params={"code": "auth-code", "state": request.state},
             follow_redirects=False,
@@ -84,13 +66,15 @@ def test_callback_creates_connection_and_redirects(
     assert response.status_code in (302, 307)
     assert "connected=1" in response.headers["location"]
 
-    status_response = client.get(f"/api/auth/garmin/{user_id}/status")
+    status_response = auth_client.get("/api/auth/garmin/status")
     assert status_response.json() == {"connected": True}
 
 
 def test_callback_redirects_with_error_on_invalid_state(
     client: TestClient, monkeypatch
 ) -> None:
+    # No session needed: Garmin's redirect is authorized by the signed
+    # `state` token, not by a cookie.
     _configure_garmin(monkeypatch)
 
     response = client.get(
@@ -103,41 +87,36 @@ def test_callback_redirects_with_error_on_invalid_state(
     assert "error=" in response.headers["location"]
 
 
-def test_status_false_when_not_connected(
-    client: TestClient, db_session: Session, monkeypatch
-) -> None:
+def test_status_false_when_not_connected(auth_client: TestClient, monkeypatch) -> None:
     _configure_garmin(monkeypatch)
-    user_id = _seed_user(db_session)
-    response = client.get(f"/api/auth/garmin/{user_id}/status")
+    response = auth_client.get("/api/auth/garmin/status")
     assert response.json() == {"connected": False}
 
 
 def test_disconnect_removes_connection(
-    client: TestClient, db_session: Session, monkeypatch
+    auth_client: TestClient, user: User, monkeypatch
 ) -> None:
     _configure_garmin(monkeypatch)
-    user_id = _seed_user(db_session)
-    request = build_authorize_request(user_id)
+    request = build_authorize_request(user.id)
 
     with patch("httpx.AsyncClient.post", return_value=_token_response(None)):
-        client.get(
+        auth_client.get(
             "/api/auth/garmin/callback",
             params={"code": "auth-code", "state": request.state},
             follow_redirects=False,
         )
 
-    assert client.get(f"/api/auth/garmin/{user_id}/status").json() == {"connected": True}
+    assert auth_client.get("/api/auth/garmin/status").json() == {"connected": True}
 
-    disconnect_response = client.delete(f"/api/auth/garmin/{user_id}")
+    disconnect_response = auth_client.delete("/api/auth/garmin")
     assert disconnect_response.json() == {"connected": False}
-    assert client.get(f"/api/auth/garmin/{user_id}/status").json() == {"connected": False}
+    assert auth_client.get("/api/auth/garmin/status").json() == {"connected": False}
 
 
 def test_disconnect_is_idempotent_when_never_connected(
-    client: TestClient, db_session: Session, monkeypatch
+    auth_client: TestClient, monkeypatch
 ) -> None:
     _configure_garmin(monkeypatch)
-    user_id = _seed_user(db_session)
-    response = client.delete(f"/api/auth/garmin/{user_id}")
+    response = auth_client.delete("/api/auth/garmin")
     assert response.status_code == 200
     assert response.json() == {"connected": False}

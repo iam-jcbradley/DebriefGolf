@@ -88,7 +88,8 @@ describe("getRoundAnalytics", () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     expect(fetchMock).toHaveBeenCalledWith(
       expect.stringContaining("/api/rounds/5/analytics"),
-      undefined
+      // Every request is credentialed so the session cookie is sent.
+      expect.objectContaining({ credentials: "include" })
     );
     void response;
   });
@@ -99,12 +100,12 @@ describe("uploadFitFile", () => {
     mockFetchOnce(200, { round_id: 9, status: "needs_audit", sport: "golf", point_count: 42 });
     const file = new File([new Uint8Array([1, 2, 3])], "round.fit");
 
-    const result = await uploadFitFile(7, file);
+    const result = await uploadFitFile(file);
 
     expect(result.round_id).toBe(9);
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toContain("/api/rounds/upload?user_id=7");
+    expect(url).toContain("/api/rounds/upload");
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("file")).toBe(file);

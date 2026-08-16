@@ -12,23 +12,20 @@ type UploadState =
   | { status: "error"; message: string };
 
 export interface FitUploadProps {
-  userId: number | null;
   onUploaded?: (result: FitUploadResult) => void;
 }
 
-export function FitUpload({ userId, onUploaded }: FitUploadProps) {
+/** The round is attributed to the session user server-side — this component
+ * has no say in whose round it is, which is why it takes no user id. */
+export function FitUpload({ onUploaded }: FitUploadProps) {
   const [state, setState] = useState<UploadState>({ status: "idle" });
   const [isDragging, setIsDragging] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   async function handleFile(file: File) {
-    if (userId === null) {
-      setState({ status: "error", message: "Enter a user ID before uploading." });
-      return;
-    }
     setState({ status: "uploading" });
     try {
-      const result = await uploadFitFile(userId, file);
+      const result = await uploadFitFile(file);
       setState({ status: "success", result });
       onUploaded?.(result);
     } catch (error) {
