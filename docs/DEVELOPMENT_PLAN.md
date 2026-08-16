@@ -630,8 +630,9 @@ or revalidation, so every navigation refetched from scratch.
   surfaces as whatever error text the page happens to render rather than
   bouncing to `/login`. Not a regression — it's exactly as broken as it was
   before Phase 13 — but it was in scope and was missed, so it's carried
-  into Phase 14 rather than quietly re-filed. SWR's `onError` config is now
-  the obvious place for it, which the pre-SWR code didn't have.
+  into Phase 15 (Password Reset & Account Recovery) rather than quietly
+  re-filed. SWR's `onError` config is now the obvious place for it, which
+  the pre-SWR code didn't have.
 
 **Acceptance criteria:** no bespoke fetch-state machines left in `src/lib` —
 `use-dashboard-data.ts`, `use-practice-data.ts`, and `use-virtual-rounds.ts`
@@ -654,134 +655,38 @@ comes from a new idea — every item is a gap some earlier phase wrote down
 and deferred, which is why each one below names the phase it's inherited
 from.
 
-Two things shaped the grouping. First, **several unrelated-looking gaps share
-one missing dependency**: Phase 10's "no password reset", Phase 8's "no merge
-flow", and half of a real account-recovery story all fail on the same
-sentence — this app cannot send an email. That makes Phase 14 an enabling
-phase in the same way Phase 9 was, and it should go first. Second, **the
-oldest gap in the document is not any of the hardening items** — it's the
-per-round pin position, flagged in Phase 2, again in Phase 3, again in Phase
-4, and still unbuilt; Phase 16 is the one that finally pays down real product
-debt rather than engineering debt.
+**This ordering was revised after a four-perspective review** (a PM read, an
+implementation read, a design read, and an end-user read, run as independent
+passes against the first draft of this Part). All four converged on the same
+finding from different angles: the first draft led with authentication
+hardening — password reset, server-side session revocation, rate limiting,
+account merge — and buried the one phase with direct, visible product value
+(real short-siding, PRD's own marquee diagnostic) third. The PM read called
+this a 1:3 ratio of invisible engineering hygiene to user value in a
+four-phase plan; the end-user read, independently, said to ship the
+short-siding work "first, alone if you have to." The review also caught a
+factual error in the original Phase 14 (server-side sessions do not add "a
+database read where today there is none" — `get_current_user` already reads
+the database every request) and confirmed account merge has no evidence of
+actual demand, only a hypothetical inherited from Phase 8's now-deleted
+picker UI. The plan below reflects that: short-siding goes first, and merge
+plus the heavier abuse-resistance items move to the Backlog to wait for an
+actual signal rather than ship speculatively.
 
-Phases 15, 16 and 17 are independent of each other and can be reordered
-freely. Phase 14 should precede 17 only because 17's re-promotion of the
-pyright rules is easier to land when no other branch is mid-flight in the
-same files.
+Phases 15, 16 and 17 remain independent of each other and can be reordered
+freely.
 
-## Phase 14 — Auth Completion & Abuse Resistance
+## Phase 14 — Per-Round Pin Positions & True Short-Siding
 
-Goal: Phase 10 shipped real authentication and listed five things it
-deliberately didn't do. Four of them are still open, and three of those four
-are blocked on the same missing piece: there is no way for this application
-to send an email. Phase 8's account-merge gap turns out to be blocked on the
-same thing, which is why it lands here rather than in a player-identity
-phase of its own.
-
-- [ ] **An email-sending path** (`app/services/email.py`) — the actual
-  dependency under most of this phase. Development writes the message to the
-  log (no SMTP server in the dev sandbox, and the repo's convention is to
-  make the unverifiable boundary obvious rather than pretend); production
-  takes SMTP or a provider API key from settings. Follows the
-  `garmin_oauth.py` / `osm_courses.py` convention: standards-conformant code,
-  unit-tested against a mocked transport, verification limit stated plainly
-  in the module docstring.
-- [ ] **Password reset** (Phase 10 gap: "a forgotten password currently means
-  a new account"). Request → single-use signed token emailed to the account
-  → set a new password. `app/core/signing.py` already does signed,
-  expiring, self-contained tokens for two other purposes (the session cookie
-  and the Garmin OAuth `state`), so this is a third caller, not a third
-  implementation. The response to a reset request must not reveal whether an
-  account exists — same reasoning as `POST /auth/login`'s deliberately
-  identical answer for "no such account" and "wrong password".
-- [ ] **Server-side session records** (Phase 10 gap: "sessions are stateless,
-  so there's no server-side revocation"). A `session` table keyed by a random
-  id, so logout actually invalidates, "sign out everywhere" becomes possible,
-  and rotating `SECRET_KEY` stops being the only kill switch. Note the cost
-  being accepted: a database read per authenticated request, where today
-  there is none. Phase 11's benchmark should be re-run — this is the one
-  change in Part III that can plausibly make every endpoint slower.
-- [ ] **Rate limiting** (Phase 10 *and* Phase 11 both flagged this) on login,
-  register, password-reset request, and the two upload endpoints. Argon2
-  makes one guess expensive, which is not the same as bounding the number of
-  guesses; Phase 11's size limits bound one request, not a thousand of them.
-- [ ] **Account merge** (Phase 8 gap, re-scoped in this session's backlog
-  pass). Now unblocked: the merge flow proves ownership of the second account
-  by emailed confirmation, which is the same primitive password reset builds.
-  Renaming is already covered by `PATCH /api/auth/me` and needs nothing here.
-  Ownership transfer must move rounds, shots, practice sessions, virtual
-  rounds and the Garmin connection, and must be a single transaction — a
-  half-merged pair of accounts is worse than two duplicates.
-- [ ] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
-  Phase 13, not built there — see Phase 13's gap list). A 401 from `apiFetch`
-  should clear the client-side user and bounce to `/login`, not surface as
-  page-level error text. SWR's `onError` is the natural home for it now.
-- [ ] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
-  `password_hash` can't log in and need a password set out of band). Password
-  reset above is the mechanism that closes this — worth an explicit test that
-  a null-hash account can recover, since that's the whole reason the gap was
-  noted.
-
-**Acceptance criteria:** a password reset round-trips end to end against a
-real Postgres instance (request → token → new password → login with it), and
-the same test proves the old password stops working. Logout invalidates a
-session server-side, demonstrated by reusing a captured cookie after logout
-and getting 401. Login rate limiting rejects the N+1th attempt within the
-window. A merge moves every owned row and leaves no orphans, asserted per
-table. `tests/test_access_control.py` still passes unchanged — the new
-endpoints are public by necessity (you can't hold a session while recovering
-one), so each must be added to `PUBLIC_ENDPOINTS` with a written reason, not
-to make the test pass. Benchmark re-run and numbers recorded, since
-server-side sessions add a read per request.
-
-## Phase 15 — Caching & Aggregate Query Push-Down
-
-Goal: Phase 11 ended with two "not worth it until someone has that much
-data" notes and one piece of unfinished setup. The setup is the interesting
-part — Phase 11 made `GET /rounds/{id}/analytics` read-only and idempotent
-*specifically* so it could be cached later, and then didn't cache it.
-
-- [ ] **Cache round analytics.** The correctness question is the whole job,
-  not the cache itself: the computed result depends on the round's shots, the
-  round's course, *and* the caller's handicap index (which sets the SG
-  benchmark bucket, and which `PATCH /api/auth/me` can change at any time).
-  A cache key that misses any of those three serves a confidently wrong
-  number, which is worse than a slow one. Phase 11's
-  `refresh_user_strokes_gained` already knows how to fan out over a handicap
-  change and is the natural invalidation hook.
-- [ ] **Push aggregation into SQL** for `GET /bag` and both practice
-  endpoints (Phase 11 gap: "now bound by Python-side aggregation over all of
-  a user's shots, ~200ms at 21,600"). The real obstacle is named in that same
-  note — Smart Bag's IQR outlier rejection is a two-pass operation that has
-  to move into SQL (percentile_cont, or a per-club summary table refreshed on
-  write) without changing which shots get rejected. Any change here must
-  produce byte-identical output on the seeded demo round first.
-- [ ] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
-  returns every row the user owns, by definition"). Streaming response or a
-  background job; the privacy commitment in `docs/DATA_PRIVACY.md` is that
-  the export exists and is complete, not that it's instant, so this is about
-  not holding an entire account in memory rather than about latency.
-- [ ] **Re-run `scripts/benchmark.py`** and record real before/after numbers
-  in this entry, the way Phase 11's table does. This repo's stated rule is
-  measure before changing; a caching phase that reports no numbers has
-  skipped its own acceptance criteria.
-
-**Acceptance criteria:** the benchmark table above, filled in with real
-medians. A cache-invalidation test per dependency — new shot recorded,
-course reassigned, handicap index changed — each proving the next read
-reflects the change rather than a stale value. Smart Bag output byte-identical
-before and after the SQL push-down on the seeded demo round, including the
-deliberately-planted outlier shot that Phase 2's tests already rely on.
-
-## Phase 16 — Per-Round Pin Positions & True Short-Siding
-
-Goal: the oldest unpaid debt in this document. Phase 2 shipped short-siding
-as "a distance/lie-based proxy, not true short-siding" and said so. Phase 3
-repeated it. Phase 4 built `is_within_ellipse` — the exact primitive a real
-"sucker pin" check needs — and left it wired to nothing, because
-`Hole.green_center` is a static point, not where the pin was cut that day.
-Three phases have now deferred the same schema addition. This is the one that
-makes the PRD's marquee diagnostic honest.
+Goal: the oldest unpaid debt in this document, and — per the review above —
+the only phase in this Part with direct, visible product value, which is
+why it now leads. Phase 2 shipped short-siding as "a distance/lie-based
+proxy, not true short-siding" and said so. Phase 3 repeated it. Phase 4
+built `is_within_ellipse` — the exact primitive a real "sucker pin" check
+needs — and left it wired to nothing, because `Hole.green_center` is a
+static point, not where the pin was cut that day. Three phases have now
+deferred the same schema addition. This is the one that makes the PRD's
+marquee diagnostic honest.
 
 - [ ] **Schema: a per-round, per-hole pin position.** Deliberately not a
   column on `Hole` — that table is shared reference geometry across every
@@ -803,22 +708,123 @@ makes the PRD's marquee diagnostic honest.
   replay SVG and the Mapbox layer. Note the repo-wide trap: `geometry.py` and
   `hole-replay/projection.ts` are mirrors of each other and both change, or
   the SVG stops agreeing with the backend's numbers.
-- [ ] **Capture pins in the UI** — the audit wizard and manual shot entry both
-  already click a hole map to place a point, so this is a new mode on an
-  existing interaction, not a new interaction.
-- [ ] **Fall back to `green_center` when no pin was recorded**, and say so in
-  the response. Every round already in the database has no pin, and a feature
-  that silently reports "not short-sided" for all of them because the data is
-  absent is the same class of quiet wrongness this phase exists to remove.
+- [ ] **A distinct "set today's pin" UI mode, not a silent reuse of shot
+  placement.** The design read pushed back on the original wording here
+  ("a new mode on an existing interaction, not a new interaction") —
+  placing a shot is transient and done per-stroke; placing a pin is a
+  semi-permanent fact about the hole, done once, whose payoff (a moved aim
+  line, a changed verdict) is invisible until later screens. `onPick` on
+  `HoleReplayMap`/`HoleReplaySvg` is still the right implementation
+  mechanism, but it needs its own label/icon in the audit wizard and manual
+  entry flow ("Set today's pin", visually distinct from "Add a shot") so a
+  player doesn't mistake one for the other.
+- [ ] **Fall back to `green_center` when no pin was recorded — visibly, not
+  just in the API.** Every round already in the database has no pin. The
+  design read's finding here was specific: an API field nobody reads isn't
+  disclosure. The analytics response gets an explicit
+  `pin_source: "recorded" | "green_center_fallback"`, and the short-sided
+  banner shows a plain, unstartling label ("Estimated — no pin recorded this
+  round") when it's the fallback, not just a silently different number.
 
 **Acceptance criteria:** a hand-computed short-siding case per quadrant
 (pin tucked left with a miss left, same pin with a miss right, etc.) computed
 against a real pin and asserted exactly, plus the existing proxy tests still
-passing on the no-pin fallback path. Migration verified up, down and up
-against a real PostGIS instance. A real-browser pass placing a pin and seeing
-both the aim line move and the short-sided banner change verdict — the same
+passing on the no-pin fallback path — and a test that every existing
+(pinless) round round-trips with `pin_source: "green_center_fallback"` and
+the visible label renders. Migration verified up, down and up against a
+real PostGIS instance. A real-browser pass placing a pin and seeing both the
+aim line move and the short-sided banner change verdict — the same
 manual-verification bar Phases 4, 5 and 6 each held themselves to, and the
 one that caught the ellipse-anchoring bug in Phase 4.
+
+## Phase 15 — Password Reset & Account Recovery
+
+Goal: the trimmed remainder of what was originally a five-item auth phase.
+Phase 10 shipped real authentication and listed five things it deliberately
+didn't do; of those, password reset is the one with a real, common,
+non-speculative trigger (anyone can forget a password) and a small, bounded
+blast radius. The review split it out from server-side session revocation,
+rate limiting, and account merge — each real, but each wanting either
+infrastructure this phase doesn't need (a shared counter/cache store) or an
+actual signal of demand this app doesn't have yet. See the Backlog for where
+those three went and why.
+
+- [ ] **An email-sending path** (`app/services/email.py`). Development writes
+  the message to the log (no SMTP server in the dev sandbox, and the repo's
+  convention is to make the unverifiable boundary obvious rather than
+  pretend); production takes SMTP or a provider API key from settings.
+  Follows the `garmin_oauth.py` / `osm_courses.py` convention:
+  standards-conformant code, unit-tested against a mocked transport,
+  verification limit stated plainly in the module docstring.
+- [ ] **Password reset** (Phase 10 gap: "a forgotten password currently means
+  a new account"). Request → single-use signed token emailed to the account
+  → set a new password. `app/core/signing.py` already does signed, expiring,
+  self-contained tokens for two other purposes (the session cookie and the
+  Garmin OAuth `state`), so this is a third caller, not a third
+  implementation. The response to a reset request must not reveal whether an
+  account exists — same reasoning as `POST /auth/login`'s deliberately
+  identical answer for "no such account" and "wrong password". UI: two named
+  pages, `/forgot-password` and `/reset-password/[token]`, in the existing
+  `/login` visual register — no alarm styling, dry factual copy ("Check your
+  email for a reset link"), matching `docs/STYLE_GUIDE.md`'s ban on
+  exclamation points and apology theater.
+- [ ] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
+  Phase 13, not built there — see Phase 13's gap list). A 401 from `apiFetch`
+  clears the client-side user and bounces to `/login`. Copy decision, made
+  here rather than left to whoever wires the SWR `onError` handler: a plain,
+  dry line ("Signed out — sign in again"), not a bare silent redirect and
+  not alarm language either way.
+- [ ] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
+  `password_hash` can't log in and need a password set out of band). Password
+  reset above is the mechanism that closes this — worth an explicit test that
+  a null-hash account can recover, since that's the whole reason the gap was
+  noted.
+
+**Acceptance criteria:** a password reset round-trips end to end against a
+real Postgres instance (request → token → new password → login with it), and
+the same test proves the old password stops working. `tests/
+test_access_control.py` still passes unchanged — the new endpoints are
+public by necessity (you can't hold a session while recovering one), so
+each must be added to `PUBLIC_ENDPOINTS` with a written reason, not to make
+the test pass. A session-expiry test confirms a stale cookie's next request
+clears client state and redirects rather than rendering page-level error
+text.
+
+## Phase 16 — Aggregate Query Push-Down & Export Bounding
+
+Goal: Phase 11 ended with two "not worth it until someone has that much
+data" notes. The review cut the third item this phase originally carried —
+caching `GET /rounds/{id}/analytics` — because the numbers don't support it:
+Phase 11 already got that endpoint to 5.7ms, and a cache whose key can miss
+one of three dependencies (shots, course, handicap index) and silently serve
+a wrong Strokes Gained number is a bad trade for shaving single-digit
+milliseconds off an endpoint that isn't slow. Revisit only if profiling ever
+shows otherwise — see the Backlog.
+
+- [ ] **Push aggregation into SQL** for `GET /bag` and both practice
+  endpoints (Phase 11 gap: "now bound by Python-side aggregation over all of
+  a user's shots, ~200ms at 21,600"). The real obstacle is named in that same
+  note — Smart Bag's IQR outlier rejection is a two-pass operation that has
+  to move into SQL (`percentile_cont`, or a per-club summary table refreshed
+  on write) without changing which shots get rejected. Output must match the
+  current Python implementation within numeric tolerance on the seeded demo
+  round — not byte-identical, which `percentile_cont` vs. NumPy's
+  `percentile` can't guarantee given differing floating-point summation
+  order.
+- [ ] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
+  returns every row the user owns, by definition"). Streaming response or a
+  background job; the privacy commitment in `docs/DATA_PRIVACY.md` is that
+  the export exists and is complete, not that it's instant, so this is about
+  not holding an entire account in memory rather than about latency.
+- [ ] **Re-run `scripts/benchmark.py`** and record real before/after numbers
+  in this entry, the way Phase 11's table does. This repo's stated rule is
+  measure before changing; a performance phase that reports no numbers has
+  skipped its own acceptance criteria.
+
+**Acceptance criteria:** the benchmark table above, filled in with real
+medians. Smart Bag output within numeric tolerance before and after the SQL
+push-down on the seeded demo round, including the deliberately-planted
+outlier shot that Phase 2's tests already rely on.
 
 ## Phase 17 — Type-Safety Follow-Through
 
@@ -893,16 +899,58 @@ them is waiting on a decision I can make or work I can do.
   `test_duplicate_shot_within_one_payload_does_not_duplicate_it`,
   `test_a_second_hole_can_still_be_added_after_the_first`.
 - ~~No merge/rename flow for near-duplicate players (carried from Phase 8).~~
-  **Split and resolved.** Rename turned out to already work —
-  `PATCH /api/auth/me` covers it, as a side effect of Phase 10 rather than
-  by design for this item. Merge was the real gap, and it is now **scheduled
-  as part of Phase 14**: investigating it is what surfaced that it's blocked
-  on proving ownership of a second account, which needs the same
-  email-confirmation primitive password reset needs — so it belongs with
-  that work rather than alone here.
+  **Split.** Rename turned out to already work — `PATCH /api/auth/me` covers
+  it, as a side effect of Phase 10 rather than by design for this item.
+  **Account merge itself is deferred here, deliberately, not scheduled.** A
+  four-perspective plan review (see Part III's intro) found no evidence
+  anyone has actually hit the scenario it exists for — it was inherited from
+  Phase 8's picker UI, which let near-duplicate accounts get created by
+  typo, and that picker no longer exists; real login/password auth makes the
+  triggering scenario much rarer. If it does get built: it proves ownership
+  of the second account by the same emailed-confirmation primitive password
+  reset (Phase 15) builds, and needs its own transaction covering rounds,
+  shots, practice sessions, virtual rounds and the Garmin connection, plus
+  an explicit answer for what happens when both accounts have a row that
+  collides (e.g. a round on the same date) — none of which was worked out
+  before this deferral, on purpose.
+- **Server-side session revocation** (Phase 10 gap, considered for Phase 14
+  in the first draft of this Part, deferred by the plan review). Today's
+  revocation lever — rotate `SECRET_KEY`, which invalidates every session at
+  once — is coarse but functional at this app's actual scale, and the
+  original framing of the cost was wrong: `get_current_user` already reads
+  the database on every authenticated request, so a `session` table adds a
+  *second* read or a join, not a first one. If this gets built, prefer a
+  `revoked_at`/`session_version` column checked in that existing query over
+  a separate lookup, and re-run `scripts/benchmark.py` either way — the plan
+  review's developer read flagged this as the one change in this document
+  that can plausibly slow every endpoint.
+- **Login/register/upload rate limiting** (Phase 10 *and* 11 gap, also
+  deferred from the first draft's Phase 14). Still real — Argon2 makes one
+  guess expensive, which is not the same as bounding the number of guesses —
+  just not urgent enough to lead with. Needs a decision this repo hasn't had
+  to make yet: there's no Redis or equivalent shared store in
+  `docker-compose.yml` today, only Postgres, and in-memory counters don't
+  work once there's more than one worker process. Build the counters on
+  Postgres, or add a shared cache, before writing the limiter itself.
+- **Caching `GET /rounds/{id}/analytics`** (cut from Phase 16's first draft
+  by the plan review). Phase 11 already got this endpoint to 5.7ms; a cache
+  whose key can miss the round's shots, its course, or the caller's handicap
+  index serves a confidently wrong Strokes Gained number, and that
+  correctness risk isn't worth it for an endpoint that isn't slow. Revisit
+  only if profiling on real usage ever shows otherwise — not a guess ahead
+  of the data.
+- **Faster manual entry** (raised by the plan review's end-user read, not
+  previously written down anywhere). Live Garmin sync stays blocked on a
+  paid Developer Program account (see "Not scheduled" above) with no
+  near-term path to unblocking it, which means hand-clicking every shot on
+  a hole map stays the fastest way to get a round in for the foreseeable
+  future. Bulk hole entry, or a spreadsheet/CSV import for a whole round at
+  once, would address the actual bottleneck a real user is facing today —
+  worth scoping into a phase once there's a concrete design, rather than
+  left implicit.
 
-This section is now empty of open items. New findings go here first; they
-move into a phase once there's enough of a theme to justify one.
+New findings go here first; they move into a phase once there's enough of a
+theme to justify one.
 
 ## Cross-cutting (ongoing, not a single phase)
 
