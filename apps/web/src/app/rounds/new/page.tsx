@@ -64,9 +64,12 @@ function NewRoundForm() {
 
   if (!user) {
     return (
-      <main className="mx-auto max-w-md px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">New round</h1>
-        <div className="mt-6">
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <Overline accent>Manual entry</Overline>
+        <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+          New round
+        </h1>
+        <div className="mt-8 max-w-md">
           <SignedOut description="Sign in before entering a round." />
         </div>
       </main>
@@ -74,17 +77,21 @@ function NewRoundForm() {
   }
 
   return (
-    <main className="mx-auto max-w-md px-6 py-10">
-      <h1 className="text-2xl font-semibold tracking-tight">New round</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
+    <main className="mx-auto max-w-3xl px-6 py-10">
+      <Overline accent>Manual entry</Overline>
+      <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+        New round
+      </h1>
+      <p className="mt-3 max-w-prose text-sm text-muted-foreground">
         Enter a round manually — the primary way to get round data in, since Garmin&apos;s
-        developer API requires a paid account.
-      </p>
-      <p className="mt-1 text-sm text-muted-foreground">
-        For <strong className="text-foreground">{user.name}</strong>.
+        developer API requires a paid account. For{" "}
+        <strong className="text-foreground">{user.name}</strong>.
       </p>
 
-      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+      {/* The page keeps the standard 3xl measure so its header lines up with
+          every other page; the form itself stays narrow, because a two-field
+          form stretched to 3xl reads as a mistake. */}
+      <form onSubmit={handleSubmit} className="mt-8 max-w-md space-y-4">
         <label className="flex flex-col gap-1 text-sm">
           <Overline as="span">Course</Overline>
           <Select value={courseId} onChange={(e) => setCourseId(e.target.value)}>

@@ -21,21 +21,21 @@ function isActive(pathname: string | null, href: string): boolean {
 
 const navLinkClass = (active: boolean) =>
   cn(
-    "overline border-b pb-0.5 transition-colors",
+    "kicker border-b pb-0.5 transition-colors",
     active ? "border-primary text-foreground" : "border-transparent hover:text-foreground"
   );
 
 const mutedLinkClass =
-  "overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground";
+  "kicker border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground";
 
 /**
  * A masthead, not a toolbar — serif wordmark, uppercase text links, an
  * understated underline for the active page. No pills, no tabs, no icons.
  *
  * Below `md`, the link row and the account cluster collapse behind a text
- * "Menu" toggle instead of a hamburger glyph — icons are off-limits per the
- * style guide, and at phone widths the full row otherwise collides with the
- * wordmark and pushes "Sign out" off the right edge of the viewport.
+ * "Menu" toggle rather than a hamburger glyph (STYLE_GUIDE.md §4, Icons) —
+ * at phone widths the full row otherwise collides with the wordmark and
+ * pushes "Sign out" off the right edge of the viewport.
  */
 export function NavBar() {
   const pathname = usePathname();
@@ -84,7 +84,7 @@ export function NavBar() {
 
         <button
           type="button"
-          className="overline border-b border-transparent pb-0.5 text-foreground md:hidden"
+          className="kicker border-b border-transparent pb-0.5 text-foreground md:hidden"
           aria-expanded={menuOpen}
           aria-controls="mobile-nav-panel"
           onClick={() => setMenuOpen((open) => !open)}

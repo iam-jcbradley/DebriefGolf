@@ -63,8 +63,14 @@
      app; their semantic roles (good=green, warning=amber, critical=rust)
      are preserved. */
   --status-good: #3f6b4a;
-  --status-warning: #b9812c;
-  --status-serious: #b15b36;
+  /* Darkened from #b9812c, which was 3.17:1 on --card — below the 4.5:1 AA
+     floor for the text it's used as ("Needs audit" in the rounds list, the
+     sucker-pin heading), and 2.6:1 as the Clean Card Index meter fill
+     against its --muted track, below the 3:1 non-text floor. Now 5.35:1
+     and 4.4:1 respectively. Same ochre role, still inside the paper palette. */
+  --status-warning: #8a5e1b;
+  /* Likewise darkened from #b15b36 (4.48:1 — a near miss, but a miss). */
+  --status-serious: #a4502e;
   --status-critical: #9c4530;
   --delta-good-text: #2f5a3a;
   --delta-bad-text: #8c3f2c;
@@ -161,13 +167,18 @@
 @layer components {
   /* Uppercase, letter-spaced label — "ROUND SUMMARY", "TODAY'S DEBRIEF".
      True OpenType small-caps aren't reliable across the sans/serif pairing,
-     so this approximates the effect with tracking + size instead. */
-  .overline {
+     so this approximates the effect with tracking + size instead.
+
+     Deliberately NOT named `.overline`: Tailwind ships a built-in `overline`
+     utility for `text-decoration-line: overline`, and the utilities layer
+     outranks this one, so every label drew a stray rule above itself. The
+     component is still <Overline>; only the class name changed. */
+  .kicker {
     @apply text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase;
   }
 
   /* Large serif numeral for stat callouts — tabular so a column of scores
-     lines up. Pair with an .overline caption underneath. */
+     lines up. Pair with a .kicker caption underneath. */
   .stat-numeral {
     @apply font-serif text-4xl leading-none font-medium tabular-nums;
   }

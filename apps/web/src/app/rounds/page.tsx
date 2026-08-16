@@ -6,14 +6,8 @@ import { NavBar } from "@/components/nav-bar";
 import { SignedOut } from "@/components/signed-out";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Overline } from "@/components/ui/overline";
-import {
-  ApiError,
-  getCourses,
-  getRounds,
-  type CourseListItem,
-  type RoundStatus,
-  type RoundSummary,
-} from "@/lib/api";
+import { ApiError, getRounds, type RoundStatus, type RoundSummary } from "@/lib/api";
+import { useCourseNames } from "@/lib/use-course-names";
 import { useCurrentUser } from "@/lib/current-user";
 
 const PAGE_SIZE = 25;
@@ -37,8 +31,9 @@ function roundHref(round: RoundSummary): string {
 export default function RoundsPage() {
   const { user, loading: userLoading } = useCurrentUser();
 
+  const { courseName } = useCourseNames();
+
   const [rounds, setRounds] = useState<RoundSummary[]>([]);
-  const [courses, setCourses] = useState<CourseListItem[] | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(false);
@@ -50,11 +45,10 @@ export default function RoundsPage() {
     setLoading(true);
     setError(null);
 
-    Promise.all([getRounds({ limit: PAGE_SIZE }), getCourses()])
-      .then(([roundList, courseList]) => {
+    getRounds({ limit: PAGE_SIZE })
+      .then((roundList) => {
         if (cancelled) return;
         setRounds(roundList);
-        setCourses(courseList);
         setHasMore(roundList.length === PAGE_SIZE);
       })
       .catch((err) => {
@@ -81,11 +75,6 @@ export default function RoundsPage() {
       setLoadingMore(false);
     }
   }
-
-  const courseName = (courseId: number | null) => {
-    if (courseId === null) return "No course assigned";
-    return courses?.find((c) => c.id === courseId)?.name ?? `Course #${courseId}`;
-  };
 
   return (
     <div className="min-h-screen">
@@ -134,7 +123,11 @@ export default function RoundsPage() {
                           className="flex items-center justify-between gap-4 px-6 py-4 transition-colors hover:bg-secondary/40"
                         >
                           <div>
-                            <p className="font-medium">{courseName(round.course_id)}</p>
+                            <p className="font-medium">
+                              {round.course_id === null
+                                ? "No course assigned"
+                                : (courseName(round.course_id) ?? "—")}
+                            </p>
                             <p className="text-sm text-muted-foreground">
                               {new Date(round.played_at).toLocaleDateString(undefined, {
                                 year: "numeric",
@@ -162,7 +155,7 @@ export default function RoundsPage() {
                   type="button"
                   onClick={loadMore}
                   disabled={loadingMore}
-                  className="overline border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
+                  className="kicker border-b border-transparent pb-0.5 text-muted-foreground transition-colors hover:border-primary hover:text-foreground disabled:opacity-50"
                 >
                   {loadingMore ? "Loading…" : "Load more"}
                 </button>
