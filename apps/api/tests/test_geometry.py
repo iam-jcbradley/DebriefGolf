@@ -5,6 +5,7 @@ from app.services.geometry import (
     LatLng,
     ShotGeometryRow,
     compute_lateral_by_club,
+    green_extent_beyond_point,
     local_yards,
     offset_from_aim_line,
 )
@@ -99,6 +100,49 @@ def _row(club: str, lateral_yards: float, longitudinal_yards: float = 150.0) -> 
         tee_lat=TEE.lat, tee_lng=TEE.lng,
         green_lat=green.lat, green_lng=green.lng,
     )
+
+
+class TestGreenExtentBeyondPoint:
+    # A rectangle +-15 yards laterally, 390-410 longitudinally.
+    BOUNDARY = [
+        LatLng(lat=390 / YARDS_PER_DEGREE_LAT, lng=-15 / YARDS_PER_DEGREE_LAT),
+        LatLng(lat=390 / YARDS_PER_DEGREE_LAT, lng=15 / YARDS_PER_DEGREE_LAT),
+        LatLng(lat=410 / YARDS_PER_DEGREE_LAT, lng=15 / YARDS_PER_DEGREE_LAT),
+        LatLng(lat=410 / YARDS_PER_DEGREE_LAT, lng=-15 / YARDS_PER_DEGREE_LAT),
+    ]
+    GREEN = _green(400)
+
+    def test_centered_point_is_symmetric(self) -> None:
+        origin = LatLng(lat=400 / YARDS_PER_DEGREE_LAT, lng=0.0)
+        right, left = green_extent_beyond_point(self.BOUNDARY, TEE, self.GREEN, origin)
+        assert right == pytest.approx(15.0)
+        assert left == pytest.approx(15.0)
+
+    def test_point_tucked_left_has_more_room_on_the_right(self) -> None:
+        origin = LatLng(lat=400 / YARDS_PER_DEGREE_LAT, lng=-10 / YARDS_PER_DEGREE_LAT)
+        right, left = green_extent_beyond_point(self.BOUNDARY, TEE, self.GREEN, origin)
+        assert right == pytest.approx(25.0)
+        assert left == pytest.approx(5.0)
+
+    def test_point_tucked_right_has_more_room_on_the_left(self) -> None:
+        origin = LatLng(lat=400 / YARDS_PER_DEGREE_LAT, lng=10 / YARDS_PER_DEGREE_LAT)
+        right, left = green_extent_beyond_point(self.BOUNDARY, TEE, self.GREEN, origin)
+        assert right == pytest.approx(5.0)
+        assert left == pytest.approx(25.0)
+
+    def test_point_outside_the_boundary_still_returns_a_one_sided_extent(self) -> None:
+        # Origin beyond the right edge: every vertex is now to its left, so
+        # the "right" extent is 0 rather than negative or undefined.
+        origin = LatLng(lat=400 / YARDS_PER_DEGREE_LAT, lng=20 / YARDS_PER_DEGREE_LAT)
+        right, left = green_extent_beyond_point(self.BOUNDARY, TEE, self.GREEN, origin)
+        assert right == pytest.approx(0.0)
+        assert left == pytest.approx(35.0)
+
+    def test_empty_boundary_returns_zero_both_ways(self) -> None:
+        origin = LatLng(lat=400 / YARDS_PER_DEGREE_LAT, lng=0.0)
+        right, left = green_extent_beyond_point([], TEE, self.GREEN, origin)
+        assert right == 0.0
+        assert left == 0.0
 
 
 class TestComputeLateralByClub:

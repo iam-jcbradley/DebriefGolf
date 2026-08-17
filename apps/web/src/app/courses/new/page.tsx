@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { HoleGeometryEditor, type HoleGeometryValue } from "@/components/course-builder/hole-geometry-editor";
 import { NavBar } from "@/components/nav-bar";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Overline } from "@/components/ui/overline";
 import {
   ApiError,
   createCourse,
@@ -191,9 +194,12 @@ export default function NewCoursePage() {
     return (
       <div className="min-h-screen">
         <NavBar />
-        <main className="mx-auto max-w-2xl px-6 py-10">
-          <h1 className="text-2xl font-semibold tracking-tight">Course saved</h1>
-          <p className="mt-2 text-muted-foreground">
+        <main className="mx-auto max-w-3xl px-6 py-10">
+          <Overline accent>Course builder</Overline>
+          <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+            Course saved
+          </h1>
+          <p className="mt-3 text-muted-foreground">
             {savedCourse.name} — {savedCourse.holes.length}{" "}
             {savedCourse.holes.length === 1 ? "hole" : "holes"}.
           </p>
@@ -211,26 +217,27 @@ export default function NewCoursePage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-2xl px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Add a course</h1>
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <Overline accent>Course builder</Overline>
+        <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+          Add a course
+        </h1>
 
         {step === "search" && (
           <div className="mt-6 space-y-4">
-            <form onSubmit={handleSearch} className="flex gap-2">
-              <input
-                type="text"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search OpenStreetMap by course name"
-                className="flex-1 rounded-md border px-3 py-2 text-sm"
-              />
-              <button
-                type="submit"
-                disabled={searching || !query.trim()}
-                className="rounded-md border px-4 py-2 text-sm hover:bg-muted disabled:opacity-50"
-              >
+            <form onSubmit={handleSearch} className="flex items-end gap-3">
+              <label className="flex flex-1 flex-col gap-1">
+                <Overline as="span">Course name</Overline>
+                <Input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search OpenStreetMap"
+                />
+              </label>
+              <Button type="submit" variant="outline" disabled={searching || !query.trim()}>
                 {searching ? "Searching…" : "Search"}
-              </button>
+              </Button>
             </form>
 
             {searchError && (
