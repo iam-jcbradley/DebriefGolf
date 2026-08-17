@@ -1,6 +1,8 @@
+import math
 from pathlib import Path
 
 from fastapi.testclient import TestClient
+from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
 
 from app.models import (
@@ -16,6 +18,18 @@ from app.models import (
 )
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+# A due-north aim line, so a shot's offset from it decomposes into pure
+# lat (longitudinal) and lng (lateral) moves — see app/services/geometry.py
+# for the general tee->green projection this sidesteps for test simplicity.
+TEE_LAT, TEE_LNG = 33.7000, -78.9000
+YARDS_PER_DEGREE_LAT = 121_000.0
+
+
+def _point(longitudinal_yards: float, lateral_yards: float) -> WKTElement:
+    lat = TEE_LAT + longitudinal_yards / YARDS_PER_DEGREE_LAT
+    lng = TEE_LNG + lateral_yards / (YARDS_PER_DEGREE_LAT * math.cos(math.radians(TEE_LAT)))
+    return WKTElement(f"POINT({lng} {lat})", srid=4326)
 
 
 def _seed_practice_session(session: Session, user_id: int, shots: list[dict]) -> int:
@@ -158,6 +172,54 @@ class TestPracticeCombinesEndpoint:
         assert "iron_strike_quality" in weaknesses
         combine_names = {c["name"] for c in body["combines"]}
         assert "Low-Point Compression" in combine_names
+
+    def test_flags_driver_dispersion_weakness_from_real_gps_lateral_spread(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        """Regression test (docs/KNOWN_ISSUES.md): the driver-dispersion
+        combine used to be unreachable in production — the route computed
+        club gapping without ever passing `lateral_by_club`, so
+        `ClubGappingStats.lateral` was always `None` regardless of how wide
+        a player's actual dispersion was. This seeds real GPS locations
+        wide enough (pstdev ~21y, above the 15y threshold) that the
+        combine can only fire if the lateral offset is actually wired
+        through the route to the detector."""
+        course = Course(name="Dispersion Test Course")
+        db_session.add(course)
+        db_session.commit()
+        db_session.refresh(course)
+        hole = Hole(
+            course_id=course.id, number=1, par=4, yardage=400,
+            tee_location=_point(0, 0),
+            green_center=_point(400, 0),
+        )
+        db_session.add(hole)
+        db_session.commit()
+        db_session.refresh(hole)
+        round_ = Round(
+            user_id=user.id, course_id=course.id, total_score=4, status=RoundStatus.verified
+        )
+        db_session.add(round_)
+        db_session.commit()
+        db_session.refresh(round_)
+
+        # 250y carries (150y left to the hole), scattered ~20-25y either
+        # side of the aim line — a real "spraying it" dispersion pattern.
+        lateral_offsets = [-25, 25, -22, 22, -20, 20, 18, -18]
+        for i, lateral in enumerate(lateral_offsets, start=1):
+            db_session.add(
+                Shot(round_id=round_.id, hole_id=hole.id, shot_number=i, club="Driver",
+                     start_lie=Lie.tee, end_lie=Lie.fairway,
+                     start_distance_yards=400, end_distance_yards=150,
+                     location=_point(250, lateral))
+            )
+        db_session.commit()
+
+        response = auth_client.get("/api/practice/combines")
+
+        assert response.status_code == 200
+        weaknesses = {w["weakness"] for w in response.json()["weaknesses"]}
+        assert "driver_dispersion" in weaknesses
 
     def test_flags_approach_weakness_from_on_course_shots(
         self, auth_client: TestClient, db_session: Session, user: User

@@ -1,16 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { HoleShotEntry, type NewDraftShot } from "@/components/manual-entry/hole-shot-entry";
 import { NavBar } from "@/components/nav-bar";
+import { Overline } from "@/components/ui/overline";
 import {
   ApiError,
   getHoleReplay,
   getRoundHoles,
+  submitRoundPins,
   submitRoundShots,
   type HoleReplay,
   type HoleSummary,
+  type LatLngPoint,
   type ShotCreateInput,
 } from "@/lib/api";
 import type { DraftShot } from "@/lib/audit/types";
@@ -85,6 +89,18 @@ export default function EnterRoundPage() {
     setShots(shots.filter((shot) => shot.id !== id));
   }
 
+  async function handleSetPin(latlng: LatLngPoint) {
+    if (selectedHole === null) return;
+    try {
+      const [pin] = await submitRoundPins(roundId, [
+        { hole_number: selectedHole, location: latlng },
+      ]);
+      setHoleReplay((current) => (current ? { ...current, pin: pin.location } : current));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to save the pin");
+    }
+  }
+
   async function handleSubmitRound() {
     setSubmitting(true);
     setError(null);
@@ -116,10 +132,16 @@ export default function EnterRoundPage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-3xl space-y-6 px-6 py-10">
+      <main className="mx-auto max-w-5xl space-y-6 px-6 py-10">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Enter round #{roundId}</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <Link href="/rounds" className="text-sm text-muted-foreground underline hover:text-foreground">
+            &larr; Back to rounds
+          </Link>
+          <Overline accent className="mt-4">Round {roundId}</Overline>
+          <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+            Enter shots
+          </h1>
+          <p className="mt-3 max-w-prose text-sm text-muted-foreground">
             Click the map to set each shot&apos;s GPS location, then submit the whole round once
             you&apos;re done.
           </p>
@@ -160,7 +182,12 @@ export default function EnterRoundPage() {
         )}
 
         {holeReplay && loaded && (
-          <HoleShotEntry hole={holeReplay} draftShotsForHole={shotsForSelectedHole} onAdd={handleAdd} />
+          <HoleShotEntry
+            hole={holeReplay}
+            draftShotsForHole={shotsForSelectedHole}
+            onAdd={handleAdd}
+            onSetPin={handleSetPin}
+          />
         )}
 
         {shotsForSelectedHole.length > 0 && (
