@@ -138,7 +138,7 @@ jobs:
       # a cache hit.
       - uses: docker/setup-buildx-action@v3
       - name: Build ${{ matrix.context }} (${{ matrix.target }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           target: ${{ matrix.target }}
