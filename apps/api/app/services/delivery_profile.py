@@ -143,10 +143,10 @@ def compute_gapping_delta(
 ) -> list[GappingDelta]:
     """Sim vs. Real-World Gapping Delta (PRD §6.1): for each club with both a
     launch-monitor carry average and an on-course GPS-derived carry average
-    (`app.services.smart_bag.shot_carry_distance`), how far apart are they?
-    A club present in only one source still gets a row, with the missing
-    side left `None` — a launch monitor session doesn't require having
-    played that club on-course yet, and vice versa.
+    (`app.api.routes._shot_queries.club_carry_dispersion_sql`), how far
+    apart are they? A club present in only one source still gets a row,
+    with the missing side left `None` — a launch monitor session doesn't
+    require having played that club on-course yet, and vice versa.
     """
     range_by_club = {
         p.club: p.avg_carry_yards for p in range_profiles if p.avg_carry_yards is not None

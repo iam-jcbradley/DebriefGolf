@@ -1,12 +1,20 @@
 """Smart Bag: per-club distance gapping with IQR-based outlier rejection
 (PRD §5.3, §10 Phase 2).
 
-The stats primitives here (`reject_outliers_iqr`, `compute_dispersion`)
-operate on plain distance-sample lists, so the same engine can be fed from
-either on-course GPS shot distances (`shot_carry_distance()` below, from
-`Shot.start_distance_yards - end_distance_yards`) or R10/R50 launch monitor
-carry/total numbers (Phase 1's `LaunchMonitorShot.carry_yards`) — both
-reduce to "how far did this club hit it" samples.
+`reject_outliers_iqr` and `compute_dispersion` are the stats primitives:
+Tukey's IQR fence, then count/mean/median/stdev over the survivors. Until
+Phase 16, on-course carry samples reached them by walking every `Shot` a
+player ever recorded in Python (`Shot.start_distance_yards -
+end_distance_yards`, filtered to full-swing shots) before calling
+`compute_dispersion` per club. That walk is gone: `GET /bag` and
+`GET /practice/delivery` now get carry dispersion pre-computed from
+`app/api/routes/_shot_queries.py`'s `club_carry_dispersion_sql`, which
+reproduces the same fence and aggregation as a single SQL query (verified
+to agree with these Python functions in `tests/test_shot_queries.py`), and
+hand it to `build_club_gapping` below rather than `compute_dispersion`
+directly. `reject_outliers_iqr`/`compute_dispersion` remain the primitives
+lateral dispersion still uses (see the scope note below) and the reference
+implementation the SQL push-down is checked against.
 
 Scope note: `ClubGappingStats.lateral` is wired up but nothing populates it
 yet. PRD §5.3 wants lateral standard deviation per club, but that needs a
@@ -22,8 +30,6 @@ import statistics
 from dataclasses import dataclass
 
 import numpy as np
-
-from app.services.shot_view import ShotView
 
 DEFAULT_IQR_MULTIPLIER = 1.5
 # Below this many samples, an IQR is too noisy to be a meaningful outlier
@@ -79,34 +85,15 @@ class ClubGappingStats:
     lateral: DispersionStats | None = None
 
 
-def compute_club_gapping(
-    distances_by_club: dict[str, list[float]],
-    lateral_by_club: dict[str, list[float]] | None = None,
-    k: float = DEFAULT_IQR_MULTIPLIER,
-) -> list[ClubGappingStats]:
-    lateral_by_club = lateral_by_club or {}
-    return [
-        ClubGappingStats(
-            club=club,
-            carry=compute_dispersion(distances, k=k),
-            lateral=(
-                compute_dispersion(lateral_by_club[club], k=k) if club in lateral_by_club else None
-            ),
-        )
-        for club, distances in distances_by_club.items()
-    ]
-
-
 def build_club_gapping(
     carry_by_club: dict[str, DispersionStats],
     lateral_by_club: dict[str, list[float]] | None = None,
     k: float = DEFAULT_IQR_MULTIPLIER,
 ) -> list[ClubGappingStats]:
-    """Same shape as `compute_club_gapping`, but for carry dispersion
-    that's already been computed (e.g. by a SQL push-down — see
-    `app/api/routes/_shot_queries.py`'s `club_carry_dispersion_sql`) rather
-    than raw carry samples. Lateral dispersion still goes through
-    `compute_dispersion` here: it isn't pushed into SQL (see that module's
+    """Pairs each club's carry dispersion (already computed — by
+    `app/api/routes/_shot_queries.py`'s SQL push-down, in every current
+    caller) with its lateral dispersion. Lateral still goes through
+    `compute_dispersion` here: it isn't pushed into SQL (see this module's
     docstring for why), so it still arrives as raw samples."""
     lateral_by_club = lateral_by_club or {}
     return [
@@ -147,12 +134,3 @@ def compute_gaps(stats: list[ClubGappingStats]) -> list[ClubGap]:
         )
         for longer, shorter in zip(ordered, ordered[1:], strict=False)
     ]
-
-
-def shot_carry_distance(shot: ShotView) -> float | None:
-    """Approximate on-course "carry" for a full-swing shot as the GPS
-    distance closed: start_distance - end_distance. Not meaningful for
-    putts (no club, or club == "Putter") — those don't measure a carry."""
-    if not shot.club or shot.club == "Putter":
-        return None
-    return shot.start_distance_yards - shot.end_distance_yards

@@ -989,12 +989,16 @@ shows otherwise — see the Backlog.
   Tukey fences from those quartiles (skipped, via a `NULL` bound, for clubs
   under `MIN_SAMPLES_FOR_IQR`), then a `FILTER`-qualified aggregate for the
   survivors. `percentile_cont`'s ordered-set interpolation turned out to
-  match NumPy's default `percentile` method exactly rather than merely
-  "within tolerance" — verified directly against a live Postgres instance
-  before writing any application code, both on a synthetic sample and on
-  every club in the seeded demo round (see the acceptance-criteria note
-  below). Lateral dispersion deliberately stayed in Python: it's already the
-  smaller query (only located shots), and pushing its flat-earth trig into
+  match NumPy's default `percentile` method to the float on every sample
+  tried, both a synthetic dataset and every club in the seeded demo round,
+  verified directly against a live Postgres instance before writing any
+  application code — but `avg()`/`percentile_cont()` and Python's
+  `statistics.fmean`/`pstdev` aren't guaranteed the same summation order in
+  general, so the test suite compares to a `1e-9` tolerance rather than
+  leaning on that empirical match holding for every possible input (see the
+  acceptance-criteria note below). Lateral dispersion deliberately stayed in
+  Python: it's already the smaller query (only located shots), and pushing
+  its flat-earth trig into
   SQL would risk a third copy of `app/services/geometry.py`'s
   `YARDS_PER_DEGREE_LAT` alongside the existing TypeScript mirror — not a
   trade this phase's own named obstacle called for. `GET /bag` no longer
@@ -1032,24 +1036,48 @@ this phase and unchanged within noise of Phase 11's numbers.)
 `club_carry_dispersion_sql`'s output directly against
 `app/services/smart_bag.py`'s `compute_dispersion` on identical samples,
 including the six-sample `[248, 250, 252, 251, 249, 400]` set
-`tests/test_bag_route.py`'s planted-outlier test already relies on — count,
-excluded-outlier count, mean, median and stdev all match (stdev to
-`1e-9`), not merely "within tolerance". A below-`MIN_SAMPLES_FOR_IQR` case,
-independent multi-club aggregation, cross-user scoping, and the
-putter/non-positive-carry exclusions `shot_carry_distance`'s callers relied
-on all get their own test. `tests/test_privacy_routes.py` gained two tests
-seeding two rounds (and two practice sessions) with different clubs each,
-to catch a round/session mix-up in the new per-entity streaming query — a
-real risk this refactor introduced that the single-query original couldn't
-have had. 398 backend tests (up from 389: 7 in the new
-`test_shot_queries.py`, 2 in `test_privacy_routes.py`), ruff clean. Verified
-live against the running dev stack (not just `scripts/benchmark.py`'s bench
-database): `GET /bag`, `GET /practice/delivery`, `GET /practice/combines`,
-and `GET /me/export` all called against the seeded demo account and
-inspected by hand, plus a Chromium pass over `/rounds/{id}` (which calls
-`getSmartBag()` for its dispersion ellipse) and `/practice` confirming
-no visual or console regression. No frontend files changed this phase — the
-response shapes are identical, only how they're computed and delivered.
+`tests/test_bag_route.py`'s planted-outlier test already relies on —
+which samples get kept/excluded and the resulting count match exactly;
+mean/median/stdev are compared to `1e-9` rather than `==`, since Postgres's
+and Python's summation order aren't guaranteed identical in general even
+though they land on the same float for every case tried here. A
+below-`MIN_SAMPLES_FOR_IQR` case, the exact-boundary case (`n ==
+MIN_SAMPLES_FOR_IQR` with a real outlier present), independent multi-club
+aggregation, cross-user scoping, and the empty-string/putter/non-positive-
+carry exclusions all get their own test. `tests/test_privacy_routes.py`
+gained two tests seeding two rounds (and two practice sessions) with
+different clubs each, to catch a round/session mix-up in the new
+per-entity streaming query — a real risk this refactor introduced that the
+single-query original couldn't have had. 397 backend tests (up from 389),
+ruff clean. Verified live against the running dev stack (not just
+`scripts/benchmark.py`'s bench database): `GET /bag`,
+`GET /practice/delivery`, `GET /practice/combines`, and `GET /me/export`
+all called against the seeded demo account and inspected by hand, plus a
+Chromium pass over `/rounds/{id}` (which calls `getSmartBag()` for its
+dispersion ellipse) and `/practice` confirming no visual or console
+regression. No frontend files changed this phase — the response shapes
+are identical, only how they're computed and delivered.
+
+**Five-perspective panel, run before marking this phase done:** PM,
+developer, QA, and end-user reads (no UI changed this phase, so no
+designer read). PM and end-user reads both approved the export-latency
+trade as-is — the export is a low-frequency GDPR/CCPA action, not a
+hot-path screen, and going from ~460ms to ~710ms doesn't register against
+either the PRD's success metrics or the DATA_PRIVACY.md commitment being
+about completeness, not speed. The QA and developer reads each found real
+issues, since fixed: an `empty club == ""` divergence where the SQL only
+filtered `IS NOT NULL` but `shot_carry_distance`'s Python original also
+excluded the empty string, which would have silently surfaced a bogus
+`""` club group; an untested `n == MIN_SAMPLES_FOR_IQR` boundary case
+(added above); dead code (`compute_club_gapping` and `shot_carry_distance`
+had zero production callers left once `bag.py`/`practice.py` were cut over
+— deleted, along with `build_club_gapping` being a near-duplicate of
+`compute_club_gapping` it should have delegated to instead — replaced with
+a `TestBuildClubGapping` unit test covering the function actually in use
+now); and the mean/stdev-equality over-claim this section and the
+`percentile_cont` item above have since been reworded to match. Left as a
+named, accepted gap rather than fixed: a mid-stream export failure now
+serves a truncated 200 instead of a clean 500 (see below).
 
 **Gaps carried forward:**
 - **`GET /me/export` got slower, not just unbounded-in-memory-but-otherwise-

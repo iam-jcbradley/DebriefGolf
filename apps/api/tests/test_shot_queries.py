@@ -1,10 +1,16 @@
-"""`club_carry_dispersion_sql` (Phase 16) must produce the exact same
-numbers `app/services/smart_bag.py`'s `reject_outliers_iqr` +
-`compute_dispersion` do on the same samples — this is a SQL rewrite of
-those functions' outlier fence, not a new one, so any drift here is a
-correctness bug. `tests/test_bag_route.py`'s outlier scenario is
-duplicated at this lower level so a future SQL change gets caught before
-it reaches the endpoint.
+"""`club_carry_dispersion_sql` (Phase 16) must produce the same numbers
+`app/services/smart_bag.py`'s `reject_outliers_iqr` + `compute_dispersion`
+do on the same samples — this is a SQL rewrite of those functions' outlier
+fence, not a new one, so any drift here is a correctness bug. Which
+samples get kept and excluded, and the resulting `count`, is asserted
+exactly (integers, no floating point involved); `mean`/`median`/`stdev`
+are compared to a small tolerance rather than with `==`, since Postgres's
+`avg()`/`percentile_cont()` and Python's `statistics.fmean`/`pstdev` are
+free to sum in a different order and aren't guaranteed to land on the same
+last bit — they happen to agree exactly on these small, round-number
+fixtures, but the assertions don't lean on that. `tests/test_bag_route.py`'s
+outlier scenario is duplicated at this lower level so a future SQL change
+gets caught before it reaches the endpoint.
 """
 
 from sqlmodel import Session
@@ -59,8 +65,9 @@ class TestClubCarryDispersionSql:
         stats = result["Driver"]
         assert stats.count == expected.count == 5
         assert stats.excluded_outliers == expected.excluded_outliers == 1
-        assert stats.mean == expected.mean == 250.0
-        assert stats.median == expected.median
+        assert abs(stats.mean - expected.mean) < 1e-9
+        assert stats.mean == 250.0
+        assert abs(stats.median - expected.median) < 1e-9
         assert abs(stats.stdev - expected.stdev) < 1e-9
 
     def test_below_min_samples_for_iqr_keeps_everything(
@@ -74,7 +81,7 @@ class TestClubCarryDispersionSql:
 
         assert result["7-Iron"].count == expected.count == 3
         assert result["7-Iron"].excluded_outliers == 0
-        assert result["7-Iron"].mean == expected.mean
+        assert abs(result["7-Iron"].mean - expected.mean) < 1e-9
 
     def test_at_min_samples_for_iqr_boundary_still_rejects_outlier(
         self, db_session: Session, user: User
@@ -93,13 +100,13 @@ class TestClubCarryDispersionSql:
         stats = result["Driver"]
         assert stats.count == expected.count
         assert stats.excluded_outliers == expected.excluded_outliers
-        assert stats.mean == expected.mean
-        assert stats.median == expected.median
+        assert abs(stats.mean - expected.mean) < 1e-9
+        assert abs(stats.median - expected.median) < 1e-9
         assert abs(stats.stdev - expected.stdev) < 1e-9
 
     def test_excludes_empty_string_club(self, db_session: Session, user: User) -> None:
-        # shot_carry_distance's `if not shot.club` treats "" the same as
-        # None — the SQL filter has to match that, not just `IS NOT NULL`.
+        # An empty-string club is as much "no club recorded" as NULL —
+        # the SQL filter has to exclude both, not just `IS NOT NULL`.
         _seed_shots(db_session, user, {"": [150.0, 152.0, 148.0, 151.0]})
 
         assert club_carry_dispersion_sql(db_session, user.id) == {}
@@ -139,8 +146,7 @@ class TestClubCarryDispersionSql:
 
     def test_excludes_non_positive_carry(self, db_session: Session, user: User) -> None:
         # Negative "carry" (end farther from the hole than start) shouldn't
-        # happen in real data but must not be counted as a sample if it does
-        # — matches shot_carry_distance's callers, which all filter `> 0`.
+        # happen in real data but must not be counted as a sample if it does.
         _seed_shots(db_session, user, {"Driver": [-5.0, 0.0]})
 
         assert club_carry_dispersion_sql(db_session, user.id) == {}
