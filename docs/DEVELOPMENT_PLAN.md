@@ -1178,10 +1178,10 @@ not `Mapped[]`-typed for the ORM side), not something introduced here.
 - [x] **Re-promote the five rules to `error`** in `pyproject.toml`. Verified
   clean with `reportUnnecessaryTypeIgnoreComment` also enabled (temporarily,
   not committed — it's a one-time check, not an ongoing rule this repo has
-  opted into) to confirm none of the 11 scoped ignores were stale; one
-  pre-existing ignore in `_shot_queries.py` (predating this phase) turned out
-  to have become unnecessary as a side effect of an unrelated fix nearby and
-  was removed.
+  opted into): one pre-existing ignore in `_shot_queries.py` (predating this
+  phase) turned out to have become unnecessary as a side effect of an
+  unrelated fix nearby and was removed, leaving 10 scoped ignores, all
+  confirmed live.
 - [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
   but unverified, because this sandbox blocks registry blob fetches). Still
   needs a human to look at the first CI run against GitHub's runners and
@@ -1192,12 +1192,12 @@ warnings, 0 informations with all five rules at `error`
 (`app/api/routes/rounds.py` alone went from 44 warnings to 0). Every
 remaining suppression is a scoped `# type: ignore[rule]` with an inline
 comment naming the specific gap — no bare `# type: ignore`, confirmed by
-grep. 400 backend tests, up from 397 at the start of this phase — the 3 new
-tests (`tests/test_orm_typing.py`, covering `persisted()`'s pass-through and
-raise-on-`None` paths and `col()`'s identity) are for the two new primitives
-this phase added, not a behavior change to anything existing; every other
-file's test count is identical, and none of their assertions changed. ruff
-clean. Verified live against the
+grep. 401 backend tests, up from 397 at the start of this phase — the 4 new
+tests (`tests/test_orm_typing.py`, covering `persisted()`'s pass-through
+including the `0`-is-not-`None` case, its raise-on-`None` path, and `col()`'s
+identity) are for the two new primitives this phase added, not a behavior
+change to anything existing; every other file's test count is identical,
+and none of their assertions changed. ruff clean. Verified live against the
 running dev stack: `GET /bag`, `/practice/delivery`, `/practice/combines`,
 `/me/export`, `/rounds?limit=1`, `/rounds/{id}/holes`,
 `/rounds/{id}/analytics`, `/rounds/{id}/holes/{n}/replay`, `/rounds/{id}/shots`,
