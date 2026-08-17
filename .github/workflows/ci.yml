@@ -130,8 +130,15 @@ jobs:
             target: prod
     steps:
       - uses: actions/checkout@v4
+      # docker/build-push-action's cache-to/cache-from: type=gha needs the
+      # docker-container buildx driver — the default `docker` driver this
+      # job silently fell back to without this step can't export a GHA
+      # cache at all ("Cache export is not supported for the docker
+      # driver"), which failed the job outright, not just slower without
+      # a cache hit.
+      - uses: docker/setup-buildx-action@v3
       - name: Build ${{ matrix.context }} (${{ matrix.target }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           target: ${{ matrix.target }}

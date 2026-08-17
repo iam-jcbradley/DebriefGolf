@@ -23,7 +23,10 @@ RUN pnpm build
 
 FROM base AS prod
 ENV NODE_ENV=production
-COPY --from=build /app/public ./public
+# No public/ directory to copy — this app uses the App Router's own
+# src/app/favicon.ico convention, not a public/ folder, so there's nothing
+# here for a `public/` COPY to pick up (and one always failed the build
+# outright when this line assumed otherwise).
 COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 EXPOSE 3000

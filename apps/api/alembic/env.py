@@ -12,6 +12,7 @@ from app.models import (  # noqa: F401
     PracticeSession,
     PracticeShot,
     Round,
+    RoundHolePin,
     Shot,
     StrokesGainedBenchmark,
     User,

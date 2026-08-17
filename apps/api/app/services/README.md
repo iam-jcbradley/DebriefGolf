@@ -2,8 +2,8 @@
 
 Business logic lives here: the Strokes Gained engine, Tiger 5 / Clean Card Index
 evaluation, Smart Bag outlier rejection, .FIT/CSV parsers, R10/R50 delivery
-profiling, hole-geometry/dispersion math, and OSM course lookup. Built out
-across Phases 1–6 of
+profiling, practice-combine detection, hole-geometry/dispersion/short-siding
+math, and OSM course lookup. Built out across Phases 1–14 of
 [`docs/DEVELOPMENT_PLAN.md`](../../../../docs/DEVELOPMENT_PLAN.md).
 
 **Implemented (Phase 1):**
@@ -28,8 +28,10 @@ across Phases 1–6 of
 - `approach.py` — short-sided vs. safe-leave classification. A distance/lie
   proxy pending real pin-position geometry (Phase 4) — see module docstring.
 
-Exposed via `GET /api/rounds/{id}/analytics` and `GET /api/bag/{user_id}`
-(`app/api/routes/rounds.py`, `app/api/routes/bag.py`).
+Exposed via `GET /api/rounds/{id}/analytics` and `GET /api/bag`
+(`app/api/routes/rounds.py`, `app/api/routes/bag.py`). Both take identity from
+`CurrentUser` (Phase 10) rather than a `{user_id}` path parameter — see
+`app/api/deps.py`.
 
 **Implemented (Phase 3):**
 - `garmin_oauth.py` — Garmin Connect OAuth 2.0 + PKCE plumbing (authorize
@@ -55,7 +57,7 @@ Exposed via `app/api/routes/garmin_auth.py`.
   the same missing-pin-geometry gap).
 
 Exposed via `GET /api/rounds/{id}/holes`, `GET /api/rounds/{id}/holes/{n}/replay`,
-and the `dispersion_ellipse` field added to `GET /api/bag/{user_id}`
+and the `dispersion_ellipse` field added to `GET /api/bag`
 (`app/api/routes/rounds.py`, `app/api/routes/bag.py`).
 
 **Implemented (Phase 5):**
@@ -77,5 +79,43 @@ itself (`POST /api/courses`, `POST /api/rounds`,
 `app/api/routes/courses.py` / `app/api/routes/rounds.py` rather than a
 services module — it's CRUD, not business logic.
 
-**Not yet implemented:** prescriptive combine matching and the coach lesson
-brief export (Phase 6).
+**Implemented (Phase 6):**
+- `delivery_profile.py` — per-club aggregate launch-monitor delivery numbers
+  (Club Path, Face Angle, derived Face-to-Path, Spin Axis, Smash Factor,
+  Carry), a per-club per-session trend, and the Sim vs. Real-World Gapping
+  Delta against `smart_bag.py`'s on-course carry — reuses that engine rather
+  than duplicating it.
+- `practice_combines.py` — detects the four PRD §7.1 weaknesses (Approach
+  100-125y SG, Driver dispersion, Iron smash factor, Putting lag efficiency)
+  from data already computed elsewhere and maps each to its fixed PRD §7.1
+  combine. Per-club expected-smash-factor bands
+  (`EXPECTED_SMASH_FACTOR_BY_IRON`) replace one flat cutoff since smash
+  factor falls with loft; driver dispersion and putting lag are matched
+  exactly to their own PRD §7.1 target metrics (15y, 80%).
+
+Exposed via `GET /api/practice/delivery` and `GET /api/practice/combines`
+(`app/api/routes/practice.py`), both taking identity from `CurrentUser`; also
+feeds the 1-Page Coach-Ready Lesson Brief PDF
+(`apps/web/src/lib/coach-brief/coach-brief-document.tsx`), which reuses the
+same weakness → combine mapping rather than a second one.
+
+**Implemented (Phase 11):**
+- `shot_view.py` — the `ShotView` protocol that lets `smart_bag.py`,
+  `putting.py`, and `practice_combines.py` accept either a full `Shot` ORM
+  instance or the raw-column rows `GET /bag` and the practice endpoints
+  select instead, for the "all of this user's shots" queries where building
+  full ORM instances measurably dominates query cost.
+
+**Implemented (Phase 14):**
+- `geometry.py` gained `green_extent_beyond_point()` — how much green lies
+  beyond a point along the pin-relative miss axis, the geometric primitive
+  real short-siding needs.
+- `approach.py` — short-sided vs. safe-leave classification, now geometric
+  (miss angle relative to the round's actual per-round pin and the green
+  boundary polygon) whenever a pin, green boundary, and shot GPS location
+  are all on file; falls back to the original distance/lie proxy otherwise,
+  which is still the common case for rounds that predate Phase 14.
+
+**Not yet implemented:** nothing tracked here is outstanding as of Phase 14 —
+see `docs/DEVELOPMENT_PLAN.md`'s per-phase "Gaps carried forward" sections
+for what's still open at the feature level.

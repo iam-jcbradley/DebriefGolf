@@ -3,6 +3,7 @@
 import { type ChangeEvent, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Overline } from "@/components/ui/overline";
+import { Select } from "@/components/ui/select";
 import { ApiError, uploadPracticeSession, type PracticeUploadResult } from "@/lib/api";
 
 type UploadState =
@@ -49,18 +50,17 @@ export function PracticeUpload({ onUploaded }: PracticeUploadProps) {
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-2 text-sm" htmlFor="practice-upload-source">
           <Overline as="span">Device</Overline>
-          <select
+          <Select
             id="practice-upload-source"
             value={source}
             onChange={(event) => setSource(event.target.value as (typeof SOURCES)[number])}
-            className="border-0 border-b border-border bg-transparent py-1 text-sm outline-none focus-visible:border-primary"
           >
             {SOURCES.map((s) => (
               <option key={s} value={s}>
                 {s}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <Button
           type="button"

@@ -52,7 +52,10 @@ export function StatTile({
         {glyph && <span aria-hidden="true">{glyph} </span>}
         {value}
       </p>
-      <Overline className="mt-1.5">{label}</Overline>
+      {/* min-h reserves the second caption line so tiles whose labels wrap
+          ("Around the Green") sit flush with tiles whose labels don't
+          ("Putting") — without it, a row of tiles has ragged heights. */}
+      <Overline className="mt-1.5 block min-h-[2.2em]">{label}</Overline>
       {detail && <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>}
     </div>
   );

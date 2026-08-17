@@ -6,7 +6,7 @@ function shot(overrides: Partial<HoleReplayShot>): HoleReplayShot {
   return {
     shot_id: 1, shot_number: 1, club: "7-Iron", start_lie: "fairway", end_lie: "green",
     start_distance_yards: 150, end_distance_yards: 6, strokes_gained: null, tag: null,
-    approach_leave: "on_green", location: null,
+    approach_leave: "on_green", has_pin: false, has_green_boundary: false, location: null,
     ...overrides,
   };
 }

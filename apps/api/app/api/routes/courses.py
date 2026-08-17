@@ -1,5 +1,3 @@
-import json
-
 from fastapi import APIRouter, HTTPException, Response
 from geoalchemy2.elements import WKTElement
 from pydantic import BaseModel
@@ -8,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.models import Course, Hole
+from app.services.geometry import green_boundary_ring
 from app.services.osm_courses import (
     OsmLookupError,
     fetch_course_geometry,
@@ -73,8 +72,10 @@ def _serialize_course(session: Session, course: Course) -> dict:
         for row in rows:
             boundary = None
             if row.green_boundary_geojson:
-                ring = json.loads(row.green_boundary_geojson)["coordinates"][0]
-                boundary = [{"lat": lat, "lng": lng} for lng, lat in ring]
+                boundary = [
+                    {"lat": p.lat, "lng": p.lng}
+                    for p in green_boundary_ring(row.green_boundary_geojson)
+                ]
             geo_by_hole[row.id] = {
                 "tee": (
                     {"lat": row.tee_lat, "lng": row.tee_lng} if row.tee_lat is not None else None
