@@ -50,7 +50,9 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
   // every sign-in/out, and it needs the *current* value at the moment a
   // 401 arrives, not the value from whenever it was registered.
   const userRef = useRef(user);
-  userRef.current = user;
+  useEffect(() => {
+    userRef.current = user;
+  });
 
   const load = useCallback(async () => {
     try {
