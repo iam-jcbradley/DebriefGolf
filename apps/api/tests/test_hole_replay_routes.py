@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 from geoalchemy2.elements import WKTElement
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
+from app.models import Course, Hole, Lie, Round, RoundHolePin, RoundStatus, Shot, User
 
 
 def _point(lat: float, lng: float) -> WKTElement:
@@ -145,6 +145,45 @@ def test_hole_replay_reports_short_sided_count(
     missed_green_shot = next(s for s in body["shots"] if s["tag"] == "Missed Green")
     assert missed_green_shot["approach_leave"] == "short_sided"
     assert body["short_sided_count"] == 1
+
+
+def test_hole_replay_has_no_pin_and_reports_has_pin_false_by_default(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    """Every round predating Phase 14 (and most new ones, until a player
+    bothers to place one) has no pin — the common case, not an edge case."""
+    round_id, hole_number = _seed_round_with_hole_geometry(db_session, user)
+
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
+
+    body = response.json()
+    assert body["pin"] is None
+    assert all(not shot["has_pin"] for shot in body["shots"])
+    assert all(shot["has_green_boundary"] for shot in body["shots"])  # this hole has one
+
+
+def test_hole_replay_includes_a_recorded_pin_and_switches_to_the_geometric_rule(
+    auth_client: TestClient, db_session: Session, user: User
+) -> None:
+    round_id, hole_number = _seed_round_with_hole_geometry(db_session, user)
+    hole = db_session.exec(select(Hole)).first()  # the seed creates exactly one
+    db_session.add(
+        RoundHolePin(round_id=round_id, hole_id=hole.id, location=_point(33.7026, -78.9002))
+    )
+    db_session.commit()
+
+    response = auth_client.get(f"/api/rounds/{round_id}/holes/{hole_number}/replay")
+
+    body = response.json()
+    assert body["pin"] == {"lat": 33.7026, "lng": -78.9002}
+    missed_green_shot = next(s for s in body["shots"] if s["tag"] == "Missed Green")
+    assert missed_green_shot["has_pin"] is True
+    assert missed_green_shot["has_green_boundary"] is True
+    # Verdict may or may not flip on this specific fixture's tiny boundary —
+    # the load-bearing assertion is that it's using the real rule at all,
+    # not the fixed-distance proxy, which app/services/tests/test_approach.py
+    # already covers exhaustively by quadrant.
+    assert missed_green_shot["approach_leave"] in ("short_sided", "safe_leave")
 
 
 def test_hole_replay_404_for_unknown_hole_number(

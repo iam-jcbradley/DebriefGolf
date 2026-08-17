@@ -11,12 +11,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Divider } from "@/components/ui/divider";
 import { Overline } from "@/components/ui/overline";
 import { isPendingAnalytics } from "@/lib/api";
+import { useCourseNames } from "@/lib/use-course-names";
 import { useCurrentUser } from "@/lib/current-user";
 import { useDashboardData } from "@/lib/use-dashboard-data";
 
 export default function DashboardPage() {
   const { user } = useCurrentUser();
   const { state, refresh } = useDashboardData(user?.id ?? null);
+  const { courseName } = useCourseNames();
 
   return (
     <div className="min-h-screen">
@@ -33,29 +35,6 @@ export default function DashboardPage() {
           </div>
         ) : (
           <>
-            <Card className="mt-8">
-              <CardHeader>
-                <Overline>Log a round</Overline>
-                <CardTitle className="text-lg">Bring in a round</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Uploading for <strong className="text-foreground">{user.name}</strong>.
-                </p>
-                <div className="mt-4">
-                  <FitUpload onUploaded={refresh} />
-                </div>
-                <p className="mt-3 text-sm text-muted-foreground">
-                  No `.FIT` file handy?{" "}
-                  <Link href="/rounds/new" className="text-foreground underline hover:text-primary">
-                    Enter a round by hand
-                  </Link>{" "}
-                  instead — the primary way in, since Garmin&apos;s developer API requires a paid
-                  account.
-                </p>
-              </CardContent>
-            </Card>
-
             {state.status === "loading" && (
               <p className="py-24 text-center text-muted-foreground">Loading your round…</p>
             )}
@@ -103,9 +82,13 @@ export default function DashboardPage() {
 
             {state.status === "ready" && !isPendingAnalytics(state.analytics) && (
               <>
-                <Divider />
-                <div className="grid gap-6 md:grid-cols-2">
-                  <RoundSnapshot round={state.round} analytics={state.analytics} />
+                <div className="mt-8 grid gap-6 md:grid-cols-2">
+                  <RoundSnapshot
+                    round={state.round}
+                    analytics={state.analytics}
+                    courseName={courseName(state.round.course_id) ?? "Round Snapshot"}
+                    coursePar={state.coursePar}
+                  />
                   <TigerFiveMeter tigerFive={state.analytics.tiger_five} />
                 </div>
                 <p className="mt-5 text-sm">
@@ -121,6 +104,30 @@ export default function DashboardPage() {
                 </div>
               </>
             )}
+
+            {/* Ingestion sits below the debrief deliberately: the reason to
+                open this page is the round you already played, not the next
+                upload. */}
+            <Divider />
+            <Card>
+              <CardHeader>
+                <Overline>Log a round</Overline>
+                <CardTitle className="text-lg">Bring in another round</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Logging for <strong className="text-foreground">{user.name}</strong>.{" "}
+                  <Link href="/rounds/new" className="text-foreground underline hover:text-primary">
+                    Enter one by hand
+                  </Link>{" "}
+                  — the primary way in, since Garmin&apos;s developer API requires a paid account —
+                  or drop a `.FIT` file below.
+                </p>
+                <div className="mt-4">
+                  <FitUpload onUploaded={refresh} />
+                </div>
+              </CardContent>
+            </Card>
           </>
         )}
       </main>
