@@ -35,7 +35,7 @@ importers:
         version: 3.28.1
       next:
         specifier: 15.5.23
-        version: 15.5.23(@babel/core@7.29.7)(@types/node@20.19.43)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
+        version: 15.5.23(@babel/core@7.29.7)(@types/node@26.2.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
       react:
         specifier: 19.1.0
         version: 19.1.0
@@ -74,8 +74,8 @@ importers:
         specifier: ^14.6.4
         version: 14.6.4(@testing-library/dom@10.4.1)
       '@types/node':
-        specifier: ^20
-        version: 20.19.43
+        specifier: ^26
+        version: 26.2.0
       '@types/react':
         specifier: ^19
         version: 19.2.18
@@ -84,7 +84,7 @@ importers:
         version: 19.2.4(@types/react@19.2.18)
       '@vitejs/plugin-react':
         specifier: ^6.0.5
-        version: 6.0.5(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))
+        version: 6.0.5(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))
       '@vitest/coverage-v8':
         specifier: ^4.1.10
         version: 4.1.10(vitest@4.1.10)
@@ -108,7 +108,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.10
-        version: 4.1.10(@types/node@20.19.43)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))
+        version: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))
 
 packages:
 
@@ -1504,11 +1504,11 @@ packages:
   '@types/json5@0.0.29':
     resolution: {integrity: sha512-dRLjCWHYg4oaA77cxO64oO+7JwCwnIzkZPdrrC71jQmQtlhM556pwKo5bUzqvZndkVbeFLIIi+9TC40JNF5hNQ==}
 
-  '@types/node@20.19.43':
-    resolution: {integrity: sha512-6oYBAi5ikg4Pl+kGsoYtawUMBT2zZMCvPNF7pVLnHZfd1zf38DRiWn/gT01RYCdUqkv7Fhr+C9ot4/tb+2sVvA==}
-
   '@types/node@25.9.5':
     resolution: {integrity: sha512-OScDchr2fwuUmWdf4kZ9h7PcJiYDVInhJizG/biAq3cAvqwYktuy/TYGGdZNMtNTFUP7rnb0NU4TUdm82kt4Rg==}
+
+  '@types/node@26.2.0':
+    resolution: {integrity: sha512-5IviulTZeRNp2vAJ514cc/HUlY5nZ9fCbq9DMyC52BrhFZACo3nI0R7qBxhQmo/d27NFe96ur/b7Wwxklda+kg==}
 
   '@types/offscreencanvas@2019.7.3':
     resolution: {integrity: sha512-ieXiYmgSRXUDeOntE1InxjWyvEelZGP63M+cGuquuRLuIKKT1osnkXjxev9B7d1nXSug5vpunx+gNlbVxMlC9A==}
@@ -1818,8 +1818,8 @@ packages:
   '@webcomponents/shadycss@1.11.2':
     resolution: {integrity: sha512-vRq+GniJAYSBmTRnhCYPAPq6THYqovJ/gzGThWbgEZUQaBccndGTi1hdiUP15HzEco0I6t4RCtXyX0rsSmwgPw==}
 
-  '@zip.js/zip.js@2.8.50':
-    resolution: {integrity: sha512-CDiBSJ1ZiHhm1p6FSyNPULNXEdUtGPu7IKn0ck/qSbaR46kENemujtpzzsydOL0eKRw/jPmBZXz9aC9kVhGmZg==}
+  '@zip.js/zip.js@2.8.51':
+    resolution: {integrity: sha512-xCEMRBwBh6JPMQKy5D/RE0Ra9NJvrvjcCHNXo+NzMYCdZy3R0oAX9zJKRb1c393HNMbLYfoD2MRSPgB8L6Jskw==}
     engines: {bun: '>=0.7.0', deno: '>=1.0.0', node: '>=18.0.0'}
 
   a5-js@0.7.3:
@@ -4633,11 +4633,11 @@ packages:
     resolution: {integrity: sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw==}
     engines: {node: '>= 0.4'}
 
-  undici-types@6.21.0:
-    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
-
   undici-types@7.24.6:
     resolution: {integrity: sha512-WRNW+sJgj5OBN4/0JpHFqtqzhpbnV0GuB+OozA9gCL7a993SmU+1JBZCzLNxYsbMfIeDL+lTsphD5jN5N+n0zg==}
+
+  undici-types@8.3.0:
+    resolution: {integrity: sha512-j375ScV60dom+YkPFIfTLcOiPxkN/buHz5GobjLhixFuANaNs3C9l4GmrWqejgXWJ7BbJcFYpTEUkS1Ge8bpZQ==}
 
   undici@7.29.0:
     resolution: {integrity: sha512-IDxfleLmmbSskfWSUATiN1nfn2rDuvnMOqb5CWR92iIfojA0Ud+ulOAAEQ57LPr9rWmsreUyf5lwyao+7GNNVw==}
@@ -4936,7 +4936,7 @@ snapshots:
       '@esri/arcgis-html-sanitizer': 4.1.0
       '@esri/calcite-components': 3.3.3
       '@vaadin/grid': 24.9.17
-      '@zip.js/zip.js': 2.8.50
+      '@zip.js/zip.js': 2.8.51
       luxon: 3.7.2
       marked: 16.3.0
       tslib: 2.8.1
@@ -6328,7 +6328,7 @@ snapshots:
       picocolors: 1.1.1
       redent: 3.0.0
     optionalDependencies:
-      vitest: 4.1.10(@types/node@20.19.43)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))
+      vitest: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))
 
   '@testing-library/react@16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.4(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.1.0(react@19.1.0))(react@19.1.0)':
     dependencies:
@@ -6386,7 +6386,7 @@ snapshots:
 
   '@types/brotli@1.3.5':
     dependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.2.0
     optional: true
 
   '@types/chai@5.2.3':
@@ -6541,13 +6541,13 @@ snapshots:
 
   '@types/json5@0.0.29': {}
 
-  '@types/node@20.19.43':
-    dependencies:
-      undici-types: 6.21.0
-
   '@types/node@25.9.5':
     dependencies:
       undici-types: 7.24.6
+
+  '@types/node@26.2.0':
+    dependencies:
+      undici-types: 8.3.0
 
   '@types/offscreencanvas@2019.7.3': {}
 
@@ -6842,10 +6842,10 @@ snapshots:
     dependencies:
       '@vaadin/vaadin-development-mode-detector': 2.0.7
 
-  '@vitejs/plugin-react@6.0.5(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))':
+  '@vitejs/plugin-react@6.0.5(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.1
-      vite: 8.2.1(@types/node@20.19.43)(jiti@2.7.0)
+      vite: 8.2.1(@types/node@26.2.0)(jiti@2.7.0)
 
   '@vitest/coverage-v8@4.1.10(vitest@4.1.10)':
     dependencies:
@@ -6859,7 +6859,7 @@ snapshots:
       obug: 2.1.4
       std-env: 4.2.0
       tinyrainbow: 3.1.1
-      vitest: 4.1.10(@types/node@20.19.43)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))
+      vitest: 4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))
 
   '@vitest/expect@4.1.10':
     dependencies:
@@ -6870,13 +6870,13 @@ snapshots:
       chai: 6.2.2
       tinyrainbow: 3.1.1
 
-  '@vitest/mocker@4.1.10(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))':
+  '@vitest/mocker@4.1.10(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))':
     dependencies:
       '@vitest/spy': 4.1.10
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 8.2.1(@types/node@20.19.43)(jiti@2.7.0)
+      vite: 8.2.1(@types/node@26.2.0)(jiti@2.7.0)
 
   '@vitest/pretty-format@4.1.10':
     dependencies:
@@ -6904,7 +6904,7 @@ snapshots:
 
   '@webcomponents/shadycss@1.11.2': {}
 
-  '@zip.js/zip.js@2.8.50': {}
+  '@zip.js/zip.js@2.8.51': {}
 
   a5-js@0.7.3:
     dependencies:
@@ -8964,7 +8964,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  next@15.5.23(@babel/core@7.29.7)(@types/node@20.19.43)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
+  next@15.5.23(@babel/core@7.29.7)(@types/node@26.2.0)(react-dom@19.1.0(react@19.1.0))(react@19.1.0):
     dependencies:
       '@next/env': 15.5.23
       '@swc/helpers': 0.5.15
@@ -8982,7 +8982,7 @@ snapshots:
       '@next/swc-linux-x64-musl': 15.5.23
       '@next/swc-win32-arm64-msvc': 15.5.23
       '@next/swc-win32-x64-msvc': 15.5.23
-      sharp: 0.35.3(@types/node@20.19.43)
+      sharp: 0.35.3(@types/node@26.2.0)
     transitivePeerDependencies:
       - '@babel/core'
       - '@types/node'
@@ -9586,7 +9586,7 @@ snapshots:
       - supports-color
       - typescript
 
-  sharp@0.35.3(@types/node@20.19.43):
+  sharp@0.35.3(@types/node@26.2.0):
     dependencies:
       '@img/colour': 1.1.0
       detect-libc: 2.1.2
@@ -9617,7 +9617,7 @@ snapshots:
       '@img/sharp-win32-arm64': 0.35.3
       '@img/sharp-win32-ia32': 0.35.3
       '@img/sharp-win32-x64': 0.35.3
-      '@types/node': 20.19.43
+      '@types/node': 26.2.0
     optional: true
 
   shebang-command@2.0.0:
@@ -9942,9 +9942,9 @@ snapshots:
       has-symbols: 1.1.0
       which-boxed-primitive: 1.1.1
 
-  undici-types@6.21.0: {}
-
   undici-types@7.24.6: {}
+
+  undici-types@8.3.0: {}
 
   undici@7.29.0: {}
 
@@ -10036,7 +10036,7 @@ snapshots:
       string_decoder: 1.1.1
       util-deprecate: 1.0.2
 
-  vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0):
+  vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.5
@@ -10044,14 +10044,14 @@ snapshots:
       rolldown: 1.2.4
       tinyglobby: 0.2.17
     optionalDependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.2.0
       fsevents: 2.3.3
       jiti: 2.7.0
 
-  vitest@4.1.10(@types/node@20.19.43)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0)):
+  vitest@4.1.10(@types/node@26.2.0)(@vitest/coverage-v8@4.1.10)(jsdom@30.0.1(@noble/hashes@1.8.0))(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0)):
     dependencies:
       '@vitest/expect': 4.1.10
-      '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@20.19.43)(jiti@2.7.0))
+      '@vitest/mocker': 4.1.10(vite@8.2.1(@types/node@26.2.0)(jiti@2.7.0))
       '@vitest/pretty-format': 4.1.10
       '@vitest/runner': 4.1.10
       '@vitest/snapshot': 4.1.10
@@ -10068,10 +10068,10 @@ snapshots:
       tinyexec: 1.3.0
       tinyglobby: 0.2.17
       tinyrainbow: 3.1.1
-      vite: 8.2.1(@types/node@20.19.43)(jiti@2.7.0)
+      vite: 8.2.1(@types/node@26.2.0)(jiti@2.7.0)
       why-is-node-running: 2.3.0
     optionalDependencies:
-      '@types/node': 20.19.43
+      '@types/node': 26.2.0
       '@vitest/coverage-v8': 4.1.10(vitest@4.1.10)
       jsdom: 30.0.1(@noble/hashes@1.8.0)
     transitivePeerDependencies:
