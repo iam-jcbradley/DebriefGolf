@@ -516,8 +516,14 @@ unhandled exception was a bare 500 with nothing on disk to explain it.
   (Phase 10) rather than as a pattern to copy.
 
 **Gaps carried forward:**
-- **The Docker build CI job is unverified**, per above — no registry access
-  in this environment to actually pull a base image and run it for real.
+- ~~**The Docker build CI job is unverified**, per above — no registry access
+  in this environment to actually pull a base image and run it for real.~~
+  **Verified, the hard way.** The first real GitHub Actions run against this
+  job (PR #21) failed outright — not the registry-access limit predicted
+  above, but `docker/build-push-action@v6`'s `cache-to: type=gha` silently
+  requiring the `docker-container` buildx driver, which this job never
+  switched to. Fixed by adding a `docker/setup-buildx-action@v3` step; see
+  `docs/KNOWN_ISSUES.md`.
 - **GitHub's native secret-scanning feature isn't enabled** — it's a repo
   setting outside this environment's reach, not a code gap. CodeQL covers a
   different, overlapping class of finding in the meantime.
@@ -622,6 +628,17 @@ or revalidation, so every navigation refetched from scratch.
   internal fallback-to-SVG recovery, so today's root `error.tsx` is a
   second, unreached safety net for them rather than the primary one. Still
   the right thing to have for everything else.
+- **The 401 interceptor Phase 10 assigned to this phase did not get built.**
+  Phase 10's gap list says, in as many words, "a 401 interceptor in
+  `apiFetch` belongs with Phase 13's data-layer work" — and this phase
+  rewrote the data layer without doing it. `apiFetch` still throws a bare
+  `ApiError(401)` (`src/lib/api.ts`), so a session that expires mid-visit
+  surfaces as whatever error text the page happens to render rather than
+  bouncing to `/login`. Not a regression — it's exactly as broken as it was
+  before Phase 13 — but it was in scope and was missed, so it's carried
+  into Phase 15 (Password Reset & Account Recovery) rather than quietly
+  re-filed. SWR's `onError` config is now the obvious place for it, which
+  the pre-SWR code didn't have.
 
 **Acceptance criteria:** no bespoke fetch-state machines left in `src/lib` —
 `use-dashboard-data.ts`, `use-practice-data.ts`, and `use-virtual-rounds.ts`
@@ -633,6 +650,371 @@ default (unit-tested directly with a thrown `Error` and a mocked `reset`); an
 unmatched route renders the new `not-found.tsx`, verified in a real browser
 (Chromium via Playwright) against the dev server, not just asserted in
 jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
+
+---
+
+# Part III — Completion (Phases 14-17)
+
+Parts I and II each ended with an explicit, honest list of what didn't get
+built. Part III is those lists, promoted into scheduled work. Nothing here
+comes from a new idea — every item is a gap some earlier phase wrote down
+and deferred, which is why each one below names the phase it's inherited
+from.
+
+**This ordering was revised after a four-perspective review** (a PM read, an
+implementation read, a design read, and an end-user read, run as independent
+passes against the first draft of this Part). All four converged on the same
+finding from different angles: the first draft led with authentication
+hardening — password reset, server-side session revocation, rate limiting,
+account merge — and buried the one phase with direct, visible product value
+(real short-siding, PRD's own marquee diagnostic) third. The PM read called
+this a 1:3 ratio of invisible engineering hygiene to user value in a
+four-phase plan; the end-user read, independently, said to ship the
+short-siding work "first, alone if you have to." The review also caught a
+factual error in the original Phase 14 (server-side sessions do not add "a
+database read where today there is none" — `get_current_user` already reads
+the database every request) and confirmed account merge has no evidence of
+actual demand, only a hypothetical inherited from Phase 8's now-deleted
+picker UI. The plan below reflects that: short-siding goes first, and merge
+plus the heavier abuse-resistance items move to the Backlog to wait for an
+actual signal rather than ship speculatively.
+
+Phases 15, 16 and 17 remain independent of each other and can be reordered
+freely.
+
+## Phase 14 — Per-Round Pin Positions & True Short-Siding (done, with noted gaps)
+
+Goal: the oldest unpaid debt in this document, and — per the first review —
+the only phase in this Part with direct, visible product value, which is
+why it leads. Phase 2 shipped short-siding as "a distance/lie-based proxy,
+not true short-siding" and said so. Phase 3 repeated it. Phase 4 built
+`is_within_ellipse` — the exact primitive a real "sucker pin" check needs —
+and left it wired to nothing, because `Hole.green_center` is a static point,
+not where the pin was cut that day. Three phases have now deferred the same
+schema addition. This is the one that makes the PRD's marquee diagnostic
+honest.
+
+**A second panel pass, run specifically as this phase's pre-implementation
+gate, sent the previous version of this entry back.** It wasn't a priority
+question this time — that was already settled — it was readiness. The
+developer and design reads independently caught that the plan was factually
+wrong about the codebase it was describing (the audit wizard has no map or
+location field at all; "reuse the existing interaction" only holds for
+manual entry), that "true geometric short-siding" named its inputs but never
+specified an actual rule, and that the new table was missing the same
+uniqueness/cascade discipline this session already added to `Shot`. Three
+readers independently hit the same finding from different angles — PM, design,
+and the end-user read all separately flagged that a fallback label appearing
+on ~100% of existing rounds at launch needed a real decision, not inherited
+copy. This revision makes those decisions explicitly rather than leaving them
+for whoever implements it to guess:
+
+- **Pin capture ships in manual entry only.** The audit wizard
+  (`audit-wizard/add-shot-form.tsx`) has no map or location UI today —
+  contrary to what the previous draft assumed, there's nothing there to
+  relabel. Adding one is real, separate scope; it's not in this phase (see
+  below).
+- **Placing a pin is optional, never required.** No hole is blocked or
+  nagged for missing one; an unmarked hole just gets the fallback verdict.
+- **The fallback isn't styled as a warning.** `ShortSidedBanner`
+  (`components/hole-replay/short-sided-banner.tsx`) returns `null` on most
+  holes and uses `--status-critical` (the same rust as `--destructive`) for
+  an actual disaster flag — wrong precedent for routine data provenance.
+  The pin-source line lives outside that banner, in `text-muted-foreground`,
+  and reads "Based on green center — no pin recorded" rather than
+  "Estimated," which two independent reads flagged as landing closer to an
+  apology than a fact on a field that'll be true for nearly every round at
+  launch.
+- **Audit-wizard pin capture, short-siding trends over time, and live
+  in-round pin capture at the moment of play (the end-user read's
+  preference — see the new Backlog item) are explicitly not in this
+  phase.**
+
+- [x] **Schema: a per-round, per-hole pin position.** `RoundHolePin`
+  (`app/models/round_hole_pin.py`), not a column on `Hole` — that table is
+  shared reference geometry across every user's rounds, and a pin is a
+  property of one round on one day, the same reasoning that keeps
+  `VirtualRound` separate from `Round`. `UniqueConstraint("round_id",
+  "hole_id", name="uq_pin_round_hole")` (one pin per hole per round — a
+  second placement replaces it, the way a resubmitted shot does, not a
+  second row), `round_id` cascades on delete, `hole_id` does not (`Hole` is
+  shared reference geometry, not this row's to own — same comment
+  `Shot.hole_id` already carries). Migration `cfdf38640868` verified up,
+  down and up against a real local Postgres 16 + PostGIS instance
+  (`postgresql-16-postgis-3` via `apt`, this sandbox's Docker registry
+  still being blocked); `\d round_hole_pin` confirms a single GIST index
+  (autogenerate's redundant `op.create_index` removed, per this repo's own
+  documented caveat) and the two FK cascade behaviors. The unique
+  constraint was exercised directly at the SQL level, not just through the
+  API: a second `INSERT` for the same `(round_id, hole_id)` inside the same
+  transaction raises `duplicate key value violates unique constraint
+  "uq_pin_round_hole"`, as intended.
+- [x] **A real, specified short-siding rule** in `app/services/approach.py`.
+  Given the pin, the green boundary polygon, and the miss point: take the
+  line through the pin along the shot's approach bearing, measure how much
+  green lies beyond the pin on the miss's side of that line
+  (`green_extent_beyond_point()`, `app/services/geometry.py`) versus the
+  opposite side, and call it short-sided when the miss's side has
+  substantially less green to work with — the golf-instruction definition,
+  not a fixed distance. `SHORT_SIDE_GREEN_RATIO = 0.5` is this
+  implementation's own calibration, named as such in the module docstring
+  (same caveat as `SCRATCH_CURVES` and `EXPECTED_SMASH_FACTOR_BY_IRON`), not
+  a licensed number.
+- [x] **A third state the previous draft's two-value `pin_source` missed:
+  pin recorded, but no green boundary to measure against.** The response
+  reports two independent booleans, `has_pin` and `has_green_boundary`
+  (`GET /rounds/{id}/analytics` and `GET /rounds/{id}/holes/{n}/replay`),
+  rather than a single enum trying to cover three states in two values; the
+  geometric rule only runs when both are true, and the existing
+  distance/lie proxy is the fallback whenever either is missing.
+- [x] **Wired `is_within_ellipse` to real pins — client-side, not on the
+  backend.** The ellipse itself already comes from `GET /bag`, and
+  `rounds/[id]/page.tsx` already stitches hole replay + Smart Bag together
+  in the browser to anchor it (`ellipseAnchorYards`); adding a second
+  backend round-trip just to re-fetch the same bag data would have
+  duplicated that wiring, not simplified it. `is_within_ellipse` is mirrored
+  in `lib/hole-replay/dispersion.ts` (same math, same test cases ported
+  from `test_dispersion.py`) — a second math mirror pair alongside
+  `geometry.py` ↔ `projection.ts`, flagged here so it doesn't drift
+  unnoticed the way that pair's own warning exists to prevent. A new
+  `SuckerPinAlert` (`--status-warning`, not the short-sided banner's
+  `--status-critical` — this is a before-the-shot risk flag, not a report of
+  a bad outcome) renders when today's pin falls inside the approach club's
+  dispersion ellipse.
+- [x] **Aim line targets the pin, not the green center**, in both UI render
+  sites: `HoleReplaySvg` (falls back to `green_center` when no pin is
+  recorded, and now renders a distinct flag marker at the pin) and
+  `HoleReplayMap`'s Mapbox layer (a third marker color, `#c9a227`, alongside
+  the existing tee/green/shot markers).
+- [x] **A pin-placement mode on manual entry's existing map.**
+  `HoleShotEntry` gained a `mode: "shot" | "pin"` toggle (a labeled "Set
+  today's pin" control) and an `onSetPin` prop, threaded as real state
+  rather than a second meaning silently overloaded onto the existing
+  `onPick`. **Deviates from the original plan on one point, deliberately:**
+  the plan called for holding the pin in the same client-side draft as the
+  hole's shots and submitting it with them, reasoning that "no pin endpoint
+  exists yet." That premise stopped being true partway through this phase —
+  `POST /rounds/{id}/pins/bulk` was built for the API item above — so a pin
+  placement now saves immediately, the same idempotent
+  existing-pin-gets-replaced pattern `POST /shots/bulk` already established.
+  This is simpler than threading a second draft type through
+  `use-audit-draft`, and arguably safer (a pin persists the moment it's
+  placed rather than only if the player finishes and submits the whole
+  round) — recorded here since the plan's stated reasoning for the
+  original choice no longer held once the endpoint existed.
+- [x] **Report `has_pin`/`has_green_boundary` in the analytics response, and
+  render the muted provenance line described above** whenever either is
+  false. `PinProvenanceNote` (`text-muted-foreground`, not the banner's
+  `--status-critical`) renders on the hole replay page reading "Based on
+  green center — no pin recorded" (no pin) or "Based on distance — no green
+  boundary recorded" (pin but no boundary — the third state above), and
+  disappears once both are true.
+
+**Not in this phase, on purpose:** pin capture inside the audit wizard (needs
+a map/location UI added there first, which doesn't exist); short-siding rate
+aggregated as a trend over time (a natural follow-on, not this phase's job);
+live, in-round pin capture at the moment of play (see the Backlog item).
+
+**Acceptance criteria:** a hand-computed short-siding case per quadrant (pin
+tucked left with a miss left, same pin with a miss right, etc.) computed
+against a real pin and asserted exactly — `test_approach.py`'s
+`TestGeometricRule` — *and*, learning from Phase 4's own ellipse-anchoring
+bug, which passed every synthetic unit case and was only caught by a real
+visual pass against real data: the new rule was also run against the seeded
+demo round's actual shots, not just hand-built cases. This caught something
+real: hole 7's scripted narrative ("heel/push-slice into a short-sided
+bunker," the PRD §8 mockup example verbatim) actually computes as
+`safe_leave` under the pre-Phase-14 proxy — the shot ends 12y from the pin,
+past the 10y `SHORT_SIDE_PROXIMITY_YARDS` threshold, so the demo data's own
+narrative comment has been slightly wrong since Phase 2. Placing a real pin
+on the miss's side of that green via `POST /pins/bulk` and re-fetching the
+hole replay flipped the verdict to `short_sided`, as the golf actually
+calls for; placing the same pin on the opposite side correctly gave
+`safe_leave`. (The proxy's threshold isn't being changed — it's a
+documented, unvalidated calibration and out of this phase's scope — but the
+mismatch is worth knowing about.) The existing proxy tests still pass, now
+covering both fallback conditions (no pin, and pin-but-no-boundary). A test
+that every existing round (which has neither `has_pin` nor, for some holes,
+`has_green_boundary`) round-trips through the correct fallback and renders
+the muted provenance line, styled with `text-muted-foreground` and not the
+banner's `--status-critical`, verified both in `vitest` and in a real
+browser screenshot. Migration verified up, down and up against a real
+PostGIS instance, including the unique constraint rejecting a second pin
+for the same round/hole at the raw SQL level. A real-browser Playwright
+pass (Chromium, this sandbox's pre-installed browser) logged into the
+seeded demo account, switched manual entry to pin mode, clicked the hole 7
+map, and confirmed both the pin marker appeared and the aim line's SVG
+endpoint moved to it; a second pass on the round detail page confirmed the
+provenance note appears/disappears correctly across holes with and without
+a recorded pin. **The Mapbox-layer half of that pass is unverified in this
+sandbox** — no `NEXT_PUBLIC_MAPBOX_TOKEN` is configured here, the same
+standing limit `garmin_oauth.py` and `osm_courses.py` already document;
+`HoleReplayMap` falls back to the SVG schematic whenever no token is
+present, which is what the browser pass above actually exercised. 369
+backend tests (up from 362: `TestGreenExtentBeyondPoint`,
+`TestGeometricRule`, `TestCreatePinsBulk`, and the hole-replay/analytics
+pin-provenance cases), ruff clean, pyright clean (0 errors, 118 warnings —
+up from 101, all in the same pre-existing demoted categories, no new
+category introduced). 332 frontend tests (up from 310), `tsc --noEmit`
+clean, eslint clean.
+
+**Gaps carried forward:**
+- **The Mapbox-layer aim line/pin marker is implemented but unverified in a
+  real browser**, per the standing Mapbox token limit above — only its
+  props/marker-call wiring is covered by `hole-replay-map.test.tsx`'s mocked
+  `mapbox-gl`.
+- **Hole 7's seed narrative comment is now slightly inaccurate** (says
+  "short-sided," proxy-classifies as `safe_leave` without a pin) — a
+  one-line comment fix, not a behavior bug, left for whoever next touches
+  `app/db/seed.py` rather than bundled into this phase's diff.
+- **`SHORT_SIDE_GREEN_RATIO = 0.5` is still unvalidated calibration**, as
+  documented in `approach.py` — the acceptance-criteria pass checked that it
+  produces sensible, side-correct verdicts on real geometry, not that 0.5
+  specifically is the right cutoff.
+- Audit-wizard pin capture, short-siding trend-over-time, and live in-round
+  pin capture remain explicitly out of scope — see Backlog.
+
+## Phase 15 — Password Reset & Account Recovery
+
+Goal: the trimmed remainder of what was originally a five-item auth phase.
+Phase 10 shipped real authentication and listed five things it deliberately
+didn't do; of those, password reset is the one with a real, common,
+non-speculative trigger (anyone can forget a password) and a small, bounded
+blast radius. The review split it out from server-side session revocation,
+rate limiting, and account merge — each real, but each wanting either
+infrastructure this phase doesn't need (a shared counter/cache store) or an
+actual signal of demand this app doesn't have yet. See the Backlog for where
+those three went and why.
+
+- [ ] **An email-sending path** (`app/services/email.py`). Development writes
+  the message to the log (no SMTP server in the dev sandbox, and the repo's
+  convention is to make the unverifiable boundary obvious rather than
+  pretend); production takes SMTP or a provider API key from settings.
+  Follows the `garmin_oauth.py` / `osm_courses.py` convention:
+  standards-conformant code, unit-tested against a mocked transport,
+  verification limit stated plainly in the module docstring.
+- [ ] **Password reset** (Phase 10 gap: "a forgotten password currently means
+  a new account"). Request → single-use signed token emailed to the account
+  → set a new password. `app/core/signing.py` already does signed, expiring,
+  self-contained tokens for two other purposes (the session cookie and the
+  Garmin OAuth `state`), so this is a third caller, not a third
+  implementation. The response to a reset request must not reveal whether an
+  account exists — same reasoning as `POST /auth/login`'s deliberately
+  identical answer for "no such account" and "wrong password". UI: two named
+  pages, `/forgot-password` and `/reset-password/[token]`, in the existing
+  `/login` visual register — no alarm styling, dry factual copy ("Check your
+  email for a reset link"), matching `docs/STYLE_GUIDE.md`'s ban on
+  exclamation points and apology theater.
+- [ ] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
+  Phase 13, not built there — see Phase 13's gap list). A 401 from `apiFetch`
+  clears the client-side user and bounces to `/login`. Copy decision, made
+  here rather than left to whoever wires the SWR `onError` handler: a plain,
+  dry line ("Signed out — sign in again"), not a bare silent redirect and
+  not alarm language either way.
+- [ ] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
+  `password_hash` can't log in and need a password set out of band). Password
+  reset above is the mechanism that closes this — worth an explicit test that
+  a null-hash account can recover, since that's the whole reason the gap was
+  noted.
+
+**Acceptance criteria:** a password reset round-trips end to end against a
+real Postgres instance (request → token → new password → login with it), and
+the same test proves the old password stops working. `tests/
+test_access_control.py` still passes unchanged — the new endpoints are
+public by necessity (you can't hold a session while recovering one), so
+each must be added to `PUBLIC_ENDPOINTS` with a written reason, not to make
+the test pass. A session-expiry test confirms a stale cookie's next request
+clears client state and redirects rather than rendering page-level error
+text.
+
+## Phase 16 — Aggregate Query Push-Down & Export Bounding
+
+Goal: Phase 11 ended with two "not worth it until someone has that much
+data" notes. The review cut the third item this phase originally carried —
+caching `GET /rounds/{id}/analytics` — because the numbers don't support it:
+Phase 11 already got that endpoint to 5.7ms, and a cache whose key can miss
+one of three dependencies (shots, course, handicap index) and silently serve
+a wrong Strokes Gained number is a bad trade for shaving single-digit
+milliseconds off an endpoint that isn't slow. Revisit only if profiling ever
+shows otherwise — see the Backlog.
+
+- [ ] **Push aggregation into SQL** for `GET /bag` and both practice
+  endpoints (Phase 11 gap: "now bound by Python-side aggregation over all of
+  a user's shots, ~200ms at 21,600"). The real obstacle is named in that same
+  note — Smart Bag's IQR outlier rejection is a two-pass operation that has
+  to move into SQL (`percentile_cont`, or a per-club summary table refreshed
+  on write) without changing which shots get rejected. Output must match the
+  current Python implementation within numeric tolerance on the seeded demo
+  round — not byte-identical, which `percentile_cont` vs. NumPy's
+  `percentile` can't guarantee given differing floating-point summation
+  order.
+- [ ] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
+  returns every row the user owns, by definition"). Streaming response or a
+  background job; the privacy commitment in `docs/DATA_PRIVACY.md` is that
+  the export exists and is complete, not that it's instant, so this is about
+  not holding an entire account in memory rather than about latency.
+- [ ] **Re-run `scripts/benchmark.py`** and record real before/after numbers
+  in this entry, the way Phase 11's table does. This repo's stated rule is
+  measure before changing; a performance phase that reports no numbers has
+  skipped its own acceptance criteria.
+
+**Acceptance criteria:** the benchmark table above, filled in with real
+medians. Smart Bag output within numeric tolerance before and after the SQL
+push-down on the seeded demo round, including the deliberately-planted
+outlier shot that Phase 2's tests already rely on.
+
+## Phase 17 — Type-Safety Follow-Through
+
+Goal: Phase 12 added pyright, fixed the two real bugs it found, and demoted
+five rule categories to `warning` with a written justification. That was the
+right call for a phase whose job was "add a type checker" — it is not a
+permanent answer, and the justification says so.
+
+- [ ] **Narrow the nullable-primary-key pattern.** ~60 of the 99 warnings are
+  `id: int | None` on rows that were just fetched or just committed and
+  therefore always have one. A small `persisted(obj)` helper that narrows the
+  type at the handful of boundaries beats ~90 individual ignore comments.
+- [ ] **Annotate geometry columns honestly.** `WKTElement` assigned to a
+  column declared `str | None` is the second-largest cluster. GeoAlchemy2 ships
+  type information; the models predate anyone checking.
+- [ ] **Re-promote the five rules to `error`** in `pyproject.toml` once the
+  count is zero, so the demotion doesn't quietly become permanent — that is
+  the entire point of doing this phase at all.
+- [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
+  but unverified, because this sandbox blocks registry blob fetches). This
+  needs no work — it verifies itself on the first CI run against GitHub's
+  runners — but it needs someone to *look*, and it should be checked off by a
+  human who did.
+
+**Acceptance criteria:** `uv run pyright` reports 0 errors and 0 warnings with
+all five rules at `error`. No new blanket `# type: ignore` — each remaining
+suppression, if any, names the specific upstream stub gap it works around.
+Test suite unchanged in count and all green, since this phase should change
+no behavior whatsoever.
+
+## Not scheduled — blocked on something other than engineering time
+
+These are real gaps, listed so they aren't mistaken for oversights. None of
+them is waiting on a decision I can make or work I can do.
+
+- **Curated combine videos** (Phase 6 gap). PRD §7.1 wants curated video
+  tutorials; each combine currently links to a YouTube *search* for its drill
+  name. Filling this in needs either real video URLs from a human or a
+  curation pipeline someone has decided to own — guessing at plausible-looking
+  video links would be exactly the "quietly present unverified things as
+  working" failure this repo's conventions forbid.
+- **Live Garmin verification** (Phases 3, 5, and this session's scorecard
+  work). The OAuth flow needs paid Developer Program credentials. The
+  scorecard mapper is verified against a real sanitized payload;
+  `get_golf_shot_data`'s shape is not, and needs one real run against a live
+  account to stop being provisional.
+- **Mapbox and Overpass live verification** (Phases 4 and 5). Both blocked by
+  the sandbox's network egress policy, both unit-tested against realistic
+  fixtures in the meantime.
+- **Legal review of the privacy notice** (Phase 7). Labelled "Draft — pending
+  legal review" in the product itself. Needs counsel, not code.
+- **GitHub secret scanning** (Phase 12). A repository setting, not a commit —
+  needs an admin to toggle it at Settings → Security.
 
 ## Backlog (not yet scheduled into a phase)
 
@@ -653,20 +1035,86 @@ jsdom. 341 backend tests, unaffected — this phase touched `apps/web` only.
   `test_resubmitting_the_same_shot_does_not_duplicate_it`,
   `test_duplicate_shot_within_one_payload_does_not_duplicate_it`,
   `test_a_second_hole_can_still_be_added_after_the_first`.
-- **Rename, half-fixed by Phase 10 as a side effect, not by design:**
-  `PATCH /api/auth/me` already lets a signed-in player rename *themselves* —
-  covers the "typo in my own name" case this bullet originally meant.
-  **Merge does not exist and is a real product/security decision, not a
-  small follow-up**: combining two accounts' data means proving ownership
-  of *both* from one session, which is exactly the kind of cross-account
-  interaction Phase 10 was built to close off. Needs a deliberate answer to
-  "prove ownership how" (re-enter the second account's password in the same
-  flow? an emailed confirmation link, which needs mail-sending
-  infrastructure this app doesn't have yet, same gap Phase 10 already
-  flagged for password reset?) before it's worth building, not a guess.
+- ~~No merge/rename flow for near-duplicate players (carried from Phase 8).~~
+  **Split.** Rename turned out to already work — `PATCH /api/auth/me` covers
+  it, as a side effect of Phase 10 rather than by design for this item.
+  **Account merge itself is deferred here, deliberately, not scheduled.** A
+  four-perspective plan review (see Part III's intro) found no evidence
+  anyone has actually hit the scenario it exists for — it was inherited from
+  Phase 8's picker UI, which let near-duplicate accounts get created by
+  typo, and that picker no longer exists; real login/password auth makes the
+  triggering scenario much rarer. If it does get built: it proves ownership
+  of the second account by the same emailed-confirmation primitive password
+  reset (Phase 15) builds, and needs its own transaction covering rounds,
+  shots, practice sessions, virtual rounds and the Garmin connection, plus
+  an explicit answer for what happens when both accounts have a row that
+  collides (e.g. a round on the same date) — none of which was worked out
+  before this deferral, on purpose.
+- **Server-side session revocation** (Phase 10 gap, considered for Phase 14
+  in the first draft of this Part, deferred by the plan review). Today's
+  revocation lever — rotate `SECRET_KEY`, which invalidates every session at
+  once — is coarse but functional at this app's actual scale, and the
+  original framing of the cost was wrong: `get_current_user` already reads
+  the database on every authenticated request, so a `session` table adds a
+  *second* read or a join, not a first one. If this gets built, prefer a
+  `revoked_at`/`session_version` column checked in that existing query over
+  a separate lookup, and re-run `scripts/benchmark.py` either way — the plan
+  review's developer read flagged this as the one change in this document
+  that can plausibly slow every endpoint.
+- **Login/register/upload rate limiting** (Phase 10 *and* 11 gap, also
+  deferred from the first draft's Phase 14). Still real — Argon2 makes one
+  guess expensive, which is not the same as bounding the number of guesses —
+  just not urgent enough to lead with. Needs a decision this repo hasn't had
+  to make yet: there's no Redis or equivalent shared store in
+  `docker-compose.yml` today, only Postgres, and in-memory counters don't
+  work once there's more than one worker process. Build the counters on
+  Postgres, or add a shared cache, before writing the limiter itself.
+- **Caching `GET /rounds/{id}/analytics`** (cut from Phase 16's first draft
+  by the plan review). Phase 11 already got this endpoint to 5.7ms; a cache
+  whose key can miss the round's shots, its course, or the caller's handicap
+  index serves a confidently wrong Strokes Gained number, and that
+  correctness risk isn't worth it for an endpoint that isn't slow. Revisit
+  only if profiling on real usage ever shows otherwise — not a guess ahead
+  of the data.
+- **Faster manual entry** (raised by the plan review's end-user read, not
+  previously written down anywhere). Live Garmin sync stays blocked on a
+  paid Developer Program account (see "Not scheduled" above) with no
+  near-term path to unblocking it, which means hand-clicking every shot on
+  a hole map stays the fastest way to get a round in for the foreseeable
+  future. Bulk hole entry, or a spreadsheet/CSV import for a whole round at
+  once, would address the actual bottleneck a real user is facing today —
+  worth scoping into a phase once there's a concrete design, rather than
+  left implicit.
+- **Live, in-round pin capture** (raised by Phase 14's pre-implementation
+  panel pass, specifically the end-user read). Phase 14 as scoped captures a
+  pin after the fact, at a desk, in manual entry — the same read predicted
+  that's exactly the kind of optional step a player skips every time,
+  leaving the "true" short-siding feature mostly dormant on top of a mostly
+  unused field. The read's actual ask was a one-tap prompt at the moment of
+  play, tied to whatever GPS fix is already being captured, not a form field
+  reached later. This app has no live/in-round mobile capture surface today
+  at all — every ingestion path (`.FIT` upload, manual entry) is
+  retrospective — so this isn't a small addition to Phase 14, it's a new
+  capability. Worth designing once Phase 14 ships and there's real data on
+  whether desk-based pin capture actually gets used, per that phase's own
+  new acceptance criteria around `has_pin` being measurable.
+- **"Share" nav item removed pending a real spec** (found by a UX audit
+  walking every page, 2026-08-16). `NavBar` linked to `/share` as one of
+  PRD §8's five nav items, but no page, route, or backend ever existed
+  behind it, and nothing in the PRD beyond the §8 wireframe caption
+  describes what it should do — no public link, export, or share-token
+  concept is specified anywhere. A dead link in primary nav is worse than
+  a missing one, so it's removed (`nav-bar.tsx`) until there's an actual
+  design to build against: what gets shared (a round? the coach brief?),
+  with whom, and whether it's a public URL, a signed export, or something
+  else.
+
+New findings go here first; they move into a phase once there's enough of a
+theme to justify one.
 
 ## Cross-cutting (ongoing, not a single phase)
 
 - **Data privacy:** delivered as Phase 7 — see [`docs/DATA_PRIVACY.md`](./DATA_PRIVACY.md) for the remaining non-engineering gap (legal review of the user-facing notice). The access-control hole that makes those endpoints reachable by anyone is Phase 10.
 - **Player identity:** delivered as Phase 8 above — still not real authentication, by design; Phase 10 is where that gap actually closes.
-- **CI:** keep `.github/workflows/ci.yml` green; add new test suites to the existing `backend`/`frontend` jobs rather than creating parallel pipelines.
+- **CI:** keep `.github/workflows/ci.yml` green; add new test suites to the existing `backend`/`frontend`/`tools` jobs rather than creating parallel pipelines. Since Phase 12 that also means keeping `pyright`, `pip-audit` and both coverage steps green — a new dependency with a known CVE, or a new type error, fails the build.
+- **Gaps are load-bearing, not decoration.** Every phase entry ends with what it didn't do, and Part III exists because those lists were written honestly enough to be actionable a dozen phases later. A phase that ships with an empty "gaps carried forward" section should be treated as under-reported rather than perfect.

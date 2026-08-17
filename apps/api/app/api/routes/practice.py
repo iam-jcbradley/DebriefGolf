@@ -6,11 +6,12 @@ delta, and prescriptive practice combine recommendations.
 from collections import defaultdict
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.api.routes._shot_queries import club_gapping_with_lateral, fetch_on_course_shots
 from app.api.uploads import read_upload
-from app.models import PracticeSession, PracticeShot, Round, Shot
+from app.models import PracticeSession, PracticeShot
 from app.services.delivery_profile import (
     SessionShotRow,
     compute_delivery_profile,
@@ -99,25 +100,13 @@ async def upload_practice_session(
     }
 
 
-def _fetch_on_course_shots(session: Session, user_id: int) -> list[ShotView]:
-    """Every on-course shot this user has recorded, as raw columns rather
-    than ORM objects — see app/services/shot_view.py for why."""
-    return list(
-        session.exec(
-            select(
-                Shot.club,
-                Shot.start_distance_yards,
-                Shot.end_distance_yards,
-                Shot.end_lie,
-                Shot.strokes_gained,
-            )
-            .join(Round, Shot.round_id == Round.id)
-            .where(Round.user_id == user_id)
-        ).all()
-    )
-
-
-def _on_course_club_gapping(shots: list[Shot]) -> list:
+def _carry_only_club_gapping(shots: list[ShotView]) -> list:
+    """Carry stats only, no lateral dispersion — `get_delivery_profile`'s
+    Sim vs. Real-World gapping delta only ever reads `.carry`
+    (`compute_gapping_delta`), so this skips the extra geometry-joined query
+    `club_gapping_with_lateral` (`_shot_queries.py`) needs for lateral. Kept
+    as its own function specifically so it's obvious this is a deliberate
+    lighter-weight path and not a second, drifted copy of that one."""
     distances_by_club: dict[str, list[float]] = defaultdict(list)
     for shot in shots:
         distance = shot_carry_distance(shot)
@@ -160,7 +149,7 @@ def get_delivery_profile(user: CurrentUser, session: SessionDep) -> dict:
         ]
     )
 
-    on_course_stats = _on_course_club_gapping(_fetch_on_course_shots(session, user.id))
+    on_course_stats = _carry_only_club_gapping(fetch_on_course_shots(session, user.id))
     gapping = compute_gapping_delta(profile, on_course_stats)
 
     return {
@@ -215,7 +204,7 @@ def get_practice_combines(user: CurrentUser, session: SessionDep) -> dict:
     weakness actually detected. A user with no weaknesses flagged (or no
     data at all yet) gets an empty list, not a default recommendation.
     """
-    on_course_shots = _fetch_on_course_shots(session, user.id)
+    on_course_shots = fetch_on_course_shots(session, user.id)
 
     approach_bracket_sg = [
         shot.strokes_gained
@@ -226,7 +215,12 @@ def get_practice_combines(user: CurrentUser, session: SessionDep) -> dict:
     ]
 
     driver_stats = next(
-        (s for s in _on_course_club_gapping(on_course_shots) if s.club == "Driver"), None
+        (
+            s
+            for s in club_gapping_with_lateral(session, user.id, on_course_shots)
+            if s.club == "Driver"
+        ),
+        None,
     )
     driver_lateral_stdev = (
         driver_stats.lateral.stdev if driver_stats and driver_stats.lateral else None
