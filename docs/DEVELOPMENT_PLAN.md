@@ -874,7 +874,7 @@ clean, eslint clean.
 - Audit-wizard pin capture, short-siding trend-over-time, and live in-round
   pin capture remain explicitly out of scope — see Backlog.
 
-## Phase 15 — Password Reset & Account Recovery
+## Phase 15 — Password Reset & Account Recovery (done)
 
 Goal: the trimmed remainder of what was originally a five-item auth phase.
 Phase 10 shipped real authentication and listed five things it deliberately
@@ -886,46 +886,88 @@ infrastructure this phase doesn't need (a shared counter/cache store) or an
 actual signal of demand this app doesn't have yet. See the Backlog for where
 those three went and why.
 
-- [ ] **An email-sending path** (`app/services/email.py`). Development writes
+- [x] **An email-sending path** (`app/services/email.py`). Development writes
   the message to the log (no SMTP server in the dev sandbox, and the repo's
   convention is to make the unverifiable boundary obvious rather than
-  pretend); production takes SMTP or a provider API key from settings.
-  Follows the `garmin_oauth.py` / `osm_courses.py` convention:
-  standards-conformant code, unit-tested against a mocked transport,
-  verification limit stated plainly in the module docstring.
-- [ ] **Password reset** (Phase 10 gap: "a forgotten password currently means
+  pretend); production takes SMTP over stdlib `smtplib` using new `SMTP_*`
+  settings (`app/core/config.py`, `.env.example`). Follows the
+  `garmin_oauth.py` / `osm_courses.py` convention: standards-conformant code,
+  unit-tested against a mocked `smtplib.SMTP` (dev no-op path, TLS/login
+  branches, and both connection- and send-time failures raising `EmailError`
+  — `tests/test_email.py`), verification limit stated plainly in the module
+  docstring.
+- [x] **Password reset** (Phase 10 gap: "a forgotten password currently means
   a new account"). Request → single-use signed token emailed to the account
-  → set a new password. `app/core/signing.py` already does signed, expiring,
-  self-contained tokens for two other purposes (the session cookie and the
-  Garmin OAuth `state`), so this is a third caller, not a third
-  implementation. The response to a reset request must not reveal whether an
-  account exists — same reasoning as `POST /auth/login`'s deliberately
-  identical answer for "no such account" and "wrong password". UI: two named
+  → set a new password, at `POST /auth/forgot-password` /
+  `POST /auth/reset-password` (`app/api/routes/auth.py`). Built on
+  `app/core/signing.py` as planned — a third caller, not a third
+  implementation — but "single-use" needed one more piece than the plan
+  named: with no server-side token store, a reset token is bound to a
+  fingerprint of the account's *current* password hash
+  (`_password_fingerprint` in `app/core/security.py`); redeeming it changes
+  the hash, so the same token fails a second time on its own, no revocation
+  list required. `password_hash IS NULL` is a real, fingerprintable input
+  (hashes to `"no-password-set"`), not a special case, which is what lets a
+  pre-Phase-10 account through the same path with no branch for it anywhere.
+  `POST /auth/forgot-password` returns the identical `{"ok": true}` whether
+  or not the email has an account — same reasoning as `POST /auth/login`'s
+  deliberately identical wrong-password/no-account answer. UI: two named
   pages, `/forgot-password` and `/reset-password/[token]`, in the existing
   `/login` visual register — no alarm styling, dry factual copy ("Check your
   email for a reset link"), matching `docs/STYLE_GUIDE.md`'s ban on
-  exclamation points and apology theater.
-- [ ] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
-  Phase 13, not built there — see Phase 13's gap list). A 401 from `apiFetch`
-  clears the client-side user and bounces to `/login`. Copy decision, made
-  here rather than left to whoever wires the SWR `onError` handler: a plain,
-  dry line ("Signed out — sign in again"), not a bare silent redirect and
-  not alarm language either way.
-- [ ] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
-  `password_hash` can't log in and need a password set out of band). Password
-  reset above is the mechanism that closes this — worth an explicit test that
-  a null-hash account can recover, since that's the whole reason the gap was
-  noted.
+  exclamation points and apology theater. `/login` gained a "Forgot your
+  password?" link in sign-in mode.
+- [x] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
+  Phase 13, not built there — see Phase 13's gap list). `apiFetch` now calls
+  a registered handler on any 401 outside a small exempt list (`/auth/me`,
+  `/auth/login`, `/auth/register`, and the two reset endpoints above — the
+  flows where a 401 is the ordinary, expected answer, not a session gone bad
+  mid-use). `CurrentUserProvider` registers the handler and gates it on its
+  own current `user` state via a ref, so an anonymous visitor's routine 401s
+  don't get treated as an expired session — only a tab that actually
+  thought someone was signed in gets bounced, to `/login?expired=1`, which
+  renders the copy decision this item called for: a plain "Signed out — sign
+  in again.", not a bare silent redirect and not alarm language either way.
+- [x] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
+  `password_hash` can't log in and need a password set out of band). Closed
+  by the reset-token fingerprint scheme above; `TestForgotPassword` and
+  `TestResetPassword` in `tests/test_auth_routes.py` each have a dedicated
+  test constructing a `password_hash=None` account and taking it through the
+  real HTTP path end to end, not just asserting against the token internals.
 
-**Acceptance criteria:** a password reset round-trips end to end against a
-real Postgres instance (request → token → new password → login with it), and
-the same test proves the old password stops working. `tests/
-test_access_control.py` still passes unchanged — the new endpoints are
-public by necessity (you can't hold a session while recovering one), so
-each must be added to `PUBLIC_ENDPOINTS` with a written reason, not to make
-the test pass. A session-expiry test confirms a stale cookie's next request
-clears client state and redirects rather than rendering page-level error
-text.
+**Acceptance criteria, verified:** a real script (not just the test suite)
+called `POST /auth/forgot-password` against the running dev stack for the
+seeded demo account, read the token out of the logged dev-mode email, drove
+`/reset-password/[token]` in an actual browser (Chromium, this sandbox's
+pre-installed one) to a real new password, confirmed the dashboard rendered
+signed-in afterward, then confirmed via `/auth/login` that the old password
+now 401s and the new one 200s — and the demo account's documented password
+was reset back to its seeded value afterward so `make seed`'s printed
+credentials stay correct for the next person. `tests/test_access_control.py`
+needed no logic changes, only its `PUBLIC_ENDPOINTS` allowlist grew by the
+two new routes, each with a written reason, matching the plan. A dedicated
+interceptor test confirms a stale-session 401 clears client state and
+redirects with `?expired=1` rather than rendering page-level error text, and
+a sibling test confirms an anonymous visitor's 401 does neither. 389 backend
+tests (up from 370: `TestForgotPassword`, `TestResetPassword`, and
+`tests/test_email.py`), ruff clean, pyright clean (0 errors; new warnings are
+all the same pre-existing nullable-id pattern Phase 17 owns, no new
+category). 364 frontend tests (up from 337: the interceptor in
+`api.test.ts`/`current-user.test.tsx`, the two new pages, and `/login`'s
+additions), `tsc --noEmit` clean, eslint clean.
+
+**Gaps carried forward:**
+- **Rate limiting a reset request is still absent** — same Phase 10/11 gap
+  the Backlog already tracks for login/register, now with a third public
+  endpoint sharing it. Not new scope for this phase; noted so it isn't
+  rediscovered as if it were.
+- **The reset email is plain text**, matching this app's other outbound
+  surface (none, until now) rather than introducing an HTML-email templating
+  dependency for one transactional message.
+- **`smtplib` over TLS/auth is unit-tested against a mock, not a real SMTP
+  server** — the same unverifiable-boundary limit `garmin_oauth.py` and
+  `osm_courses.py` already carry, stated in `email.py`'s own docstring
+  rather than pretended away.
 
 ## Phase 16 — Aggregate Query Push-Down & Export Bounding
 
@@ -1061,14 +1103,17 @@ them is waiting on a decision I can make or work I can do.
   a separate lookup, and re-run `scripts/benchmark.py` either way — the plan
   review's developer read flagged this as the one change in this document
   that can plausibly slow every endpoint.
-- **Login/register/upload rate limiting** (Phase 10 *and* 11 gap, also
-  deferred from the first draft's Phase 14). Still real — Argon2 makes one
-  guess expensive, which is not the same as bounding the number of guesses —
-  just not urgent enough to lead with. Needs a decision this repo hasn't had
-  to make yet: there's no Redis or equivalent shared store in
-  `docker-compose.yml` today, only Postgres, and in-memory counters don't
-  work once there's more than one worker process. Build the counters on
-  Postgres, or add a shared cache, before writing the limiter itself.
+- **Login/register/upload/forgot-password rate limiting** (Phase 10 *and* 11
+  gap, also deferred from the first draft's Phase 14; Phase 15 added a
+  fourth public endpoint sharing it rather than closing it). Still real —
+  Argon2 makes one password guess expensive, which is not the same as
+  bounding the number of guesses, and `forgot-password` triggers a real
+  email send per request — just not urgent enough to lead with. Needs a
+  decision this repo hasn't had to make yet: there's no Redis or equivalent
+  shared store in `docker-compose.yml` today, only Postgres, and in-memory
+  counters don't work once there's more than one worker process. Build the
+  counters on Postgres, or add a shared cache, before writing the limiter
+  itself.
 - **Caching `GET /rounds/{id}/analytics`** (cut from Phase 16's first draft
   by the plan review). Phase 11 already got this endpoint to 5.7ms; a cache
   whose key can miss the round's shots, its course, or the caller's handicap

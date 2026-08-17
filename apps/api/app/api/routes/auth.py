@@ -20,8 +20,17 @@ from app.api.deps import (
     set_session_cookie,
 )
 from app.api.routes.rounds import refresh_user_strokes_gained
-from app.core.security import WeakPasswordError, hash_password, verify_password
+from app.core.config import settings
+from app.core.security import (
+    WeakPasswordError,
+    create_reset_token,
+    hash_password,
+    read_reset_token,
+    reset_token_matches_current_password,
+    verify_password,
+)
 from app.models import User
+from app.services.email import send_email
 
 router = APIRouter()
 
@@ -101,6 +110,78 @@ def login(payload: LoginIn, session: SessionDep, response: Response) -> UserOut:
     if user is None or not verify_password(user.password_hash, payload.password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
+    set_session_cookie(response, user.id)
+    return UserOut.of(user)
+
+
+class ForgotPasswordIn(BaseModel):
+    email: str
+
+
+class ForgotPasswordOut(BaseModel):
+    ok: bool = True
+
+
+@router.post("/auth/forgot-password")
+def forgot_password(payload: ForgotPasswordIn, session: SessionDep) -> ForgotPasswordOut:
+    """Always answers the same way whether or not the email has an account —
+    same reasoning as `login`'s identical "no such account"/"wrong password"
+    response above: distinguishing the two here would turn this endpoint
+    into a way to test whether an email is registered."""
+    user = session.exec(select(User).where(User.email == _normalized(payload.email))).first()
+    if user is not None:
+        token = create_reset_token(user.id, user.password_hash)
+        reset_url = f"{settings.frontend_url}/reset-password/{token}"
+        send_email(
+            to=user.email,
+            subject="Reset your Debrief Golf password",
+            body=(
+                "Someone asked to reset the password on this account.\n\n"
+                f"Reset it: {reset_url}\n\n"
+                "This link expires in an hour. If you didn't request this, ignore this email "
+                "— your password hasn't changed."
+            ),
+        )
+    return ForgotPasswordOut()
+
+
+class ResetPasswordIn(BaseModel):
+    token: str
+    password: str
+
+
+@router.post("/auth/reset-password")
+def reset_password(payload: ResetPasswordIn, session: SessionDep, response: Response) -> UserOut:
+    """Consumes a token from `forgot_password`. Also how a pre-Phase-10
+    account (`password_hash IS NULL`, can't log in — see `verify_password`)
+    gets a password set for the first time: `_password_fingerprint(None)`
+    is a real, matchable value, so nothing here special-cases it."""
+    invalid_token = HTTPException(
+        status_code=422, detail="This reset link is invalid or has expired"
+    )
+
+    parsed = read_reset_token(payload.token)
+    if parsed is None:
+        raise invalid_token
+
+    user = session.get(User, parsed.user_id)
+    if user is None or not reset_token_matches_current_password(user.password_hash, parsed):
+        # The mismatch case is what makes the token single-use: redeeming it
+        # once changes `password_hash`, so a replay of the same token lands
+        # here instead of succeeding twice.
+        raise invalid_token
+
+    try:
+        user.password_hash = hash_password(payload.password)
+    except WeakPasswordError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    # Resetting a password is itself proof of owning the account — sign
+    # them straight in rather than making them log in again right after.
     set_session_cookie(response, user.id)
     return UserOut.of(user)
 

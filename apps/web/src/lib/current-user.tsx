@@ -1,10 +1,12 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -14,6 +16,7 @@ import {
   login as loginRequest,
   logout as logoutRequest,
   register as registerRequest,
+  setUnauthorizedHandler,
   type UserProfile,
 } from "@/lib/api";
 
@@ -39,8 +42,15 @@ const CurrentUserContext = createContext<CurrentUserContextValue | null>(null);
  * HttpOnly cookie that script can't read, and the server decides who that is.
  */
 export function CurrentUserProvider({ children }: { children: ReactNode }) {
+  const router = useRouter();
   const [user, setUser] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  // Read inside the unauthorized handler without adding `user` to that
+  // effect's deps — the handler is registered once, not re-registered on
+  // every sign-in/out, and it needs the *current* value at the moment a
+  // 401 arrives, not the value from whenever it was registered.
+  const userRef = useRef(user);
+  userRef.current = user;
 
   const load = useCallback(async () => {
     try {
@@ -65,6 +75,23 @@ export function CurrentUserProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [load]);
+
+  useEffect(() => {
+    // A 401 from any protected endpoint (not the exempt auth flows — see
+    // apiFetch's own list) means the session cookie stopped working out
+    // from under a request that assumed it was still good. Only worth
+    // acting on if this tab actually thought someone was signed in:
+    // otherwise every anonymous visitor's ordinary 401s on protected pages
+    // would bounce them to /login on their very first click, which is not
+    // "your session expired," it's just what "signed out" looks like.
+    setUnauthorizedHandler(() => {
+      if (userRef.current !== null) {
+        setUser(null);
+        router.push("/login?expired=1");
+      }
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [router]);
 
   const signIn = useCallback(async (email: string, password: string) => {
     setUser(await loginRequest({ email, password }));

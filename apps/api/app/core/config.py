@@ -45,6 +45,19 @@ class Settings(BaseSettings):
         localhost, where a Secure cookie would simply never be sent."""
         return not self.is_development
 
+    # --- Outbound email (Phase 15) ---
+    # `smtp_host` empty means "no SMTP server configured" — `email.py` logs
+    # the message instead of sending it, the same unverifiable-boundary
+    # convention as Garmin OAuth and OSM lookups below. Set all of these for
+    # a real deployment; there's no separate "email enabled" flag because
+    # smtp_host being set already means it.
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "Debrief Golf <no-reply@debriefgolf.app>"
+    smtp_use_tls: bool = True
+
     # --- Garmin Connect OAuth 2.0 (PRD §4.1, §9.2) ---
     # client_id/secret and the exact authorize/token endpoint URLs come from
     # the Garmin Developer Portal for a registered app — left blank by

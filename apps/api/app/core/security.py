@@ -1,4 +1,5 @@
-"""Password hashing and login session tokens (PRD §9.2, Phase 10).
+"""Password hashing, login session tokens (PRD §9.2, Phase 10), and password
+reset tokens (Phase 15).
 
 Passwords are hashed with Argon2id (`argon2-cffi`, library defaults), the
 current OWASP first choice for new applications — deliberately slow and
@@ -16,6 +17,9 @@ size that's the right trade; a multi-tenant one would want session rows.
 """
 
 from __future__ import annotations
+
+import hashlib
+from dataclasses import dataclass
 
 from argon2 import PasswordHasher
 from argon2.exceptions import Argon2Error
@@ -70,3 +74,62 @@ def read_session_token(token: str) -> int | None:
         return None
     user_id = payload.get("user_id")
     return user_id if isinstance(user_id, int) else None
+
+
+# An hour comfortably outlasts checking email and clicking through, and
+# bounds how long a leaked or intercepted reset link stays exploitable.
+RESET_TOKEN_TTL_SECONDS = 60 * 60
+
+
+def _password_fingerprint(password_hash: str | None) -> str:
+    """A short fingerprint of the account's *current* password hash, bound
+    into every reset token so it stops working the moment the password
+    actually changes. There's no server-side token store to mark a token
+    "used" (this app is deliberately stateless — see the module docstring),
+    so binding to a value that the reset itself changes is what makes a
+    token single-use: redeem it once, the hash moves, the same token no
+    longer matches. `password_hash` may be None (a pre-Phase-10 account)
+    — that's a valid, fingerprintable state, not a special case, which is
+    exactly what lets those accounts recover through this same path.
+    """
+    basis = password_hash or "no-password-set"
+    return hashlib.sha256(basis.encode()).hexdigest()[:16]
+
+
+@dataclass(frozen=True)
+class ResetTokenPayload:
+    user_id: int
+    password_fingerprint: str
+
+
+def create_reset_token(user_id: int, current_password_hash: str | None) -> str:
+    return encode(
+        {"user_id": user_id, "pwv": _password_fingerprint(current_password_hash)},
+        ttl_seconds=RESET_TOKEN_TTL_SECONDS,
+    )
+
+
+def read_reset_token(token: str) -> ResetTokenPayload | None:
+    """The token's payload if it's a validly-signed, unexpired reset token,
+    else None. Doesn't check the fingerprint against a live user row — the
+    caller has the database session and does that comparison itself (see
+    `app/api/routes/auth.py::reset_password`), the same division of labor
+    `read_session_token` already has with `get_current_user`.
+    """
+    try:
+        payload = decode(token)
+    except TokenError:
+        return None
+    user_id, pwv = payload.get("user_id"), payload.get("pwv")
+    if not isinstance(user_id, int) or not isinstance(pwv, str):
+        return None
+    return ResetTokenPayload(user_id=user_id, password_fingerprint=pwv)
+
+
+def reset_token_matches_current_password(
+    user_password_hash: str | None, payload: ResetTokenPayload
+) -> bool:
+    """Whether `payload` (from `read_reset_token`) was minted against the
+    account's password as it stands right now — false means either a stale
+    concurrent reset request or a token that's already been redeemed once."""
+    return _password_fingerprint(user_password_hash) == payload.password_fingerprint

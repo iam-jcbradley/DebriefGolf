@@ -34,6 +34,14 @@ from app.models import Course, Hole, Round, RoundStatus, SimPlatform, User, Virt
 #   logout   — clearing a cookie shouldn't require the cookie to be valid
 #   garmin callback — Garmin's redirect, authorized by the HMAC-signed
 #                     `state` token instead (see app/api/routes/garmin_auth.py)
+#   forgot/reset password — recovering an account is, definitionally, the
+#                     one flow that can't require an active session; each is
+#                     authorized instead by its own HMAC-signed reset token
+#                     (see app/core/security.py's create_reset_token) or, for
+#                     the request step, by nothing at all — same reasoning as
+#                     login's identical response for "no account"/"wrong
+#                     password", the endpoint can't require proof of an
+#                     account existing without becoming an oracle for one
 PUBLIC_ENDPOINTS = {
     ("GET", "/api/health"),
     ("GET", "/api/ready"),
@@ -41,6 +49,8 @@ PUBLIC_ENDPOINTS = {
     ("POST", "/api/auth/login"),
     ("POST", "/api/auth/logout"),
     ("GET", "/api/auth/garmin/callback"),
+    ("POST", "/api/auth/forgot-password"),
+    ("POST", "/api/auth/reset-password"),
 }
 
 

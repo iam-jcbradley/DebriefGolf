@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   ApiError,
+  getCurrentUser,
   getRoundAnalytics,
   getRounds,
   isPendingAnalytics,
+  login,
+  requestPasswordReset,
+  resetPassword,
+  setUnauthorizedHandler,
   uploadFitFile,
 } from "./api";
 
@@ -109,5 +114,106 @@ describe("uploadFitFile", () => {
     expect(init.method).toBe("POST");
     expect(init.body).toBeInstanceOf(FormData);
     expect((init.body as FormData).get("file")).toBe(file);
+  });
+});
+
+describe("requestPasswordReset", () => {
+  it("POSTs the email to the forgot-password endpoint", async () => {
+    mockFetchOnce(200, { ok: true });
+
+    const result = await requestPasswordReset({ email: "jane@example.com" });
+
+    expect(result).toEqual({ ok: true });
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain("/api/auth/forgot-password");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ email: "jane@example.com" });
+  });
+});
+
+describe("resetPassword", () => {
+  it("POSTs the token and new password, resolving the signed-in profile", async () => {
+    const profile = {
+      id: 1,
+      email: "jane@example.com",
+      name: "Jane Doe",
+      handicap_index: 5,
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    mockFetchOnce(200, profile);
+
+    const result = await resetPassword({ token: "abc.def", password: "new-password-here" });
+
+    expect(result).toEqual(profile);
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ token: "abc.def", password: "new-password-here" });
+  });
+
+  it("throws ApiError with the backend's message for an invalid token", async () => {
+    mockFetchOnce(422, { detail: "This reset link is invalid or has expired" });
+
+    await expect(resetPassword({ token: "bad", password: "whatever-password" })).rejects.toMatchObject({
+      status: 422,
+      message: "This reset link is invalid or has expired",
+    });
+  });
+});
+
+describe("the unauthorized interceptor", () => {
+  afterEach(() => {
+    setUnauthorizedHandler(null);
+  });
+
+  it("fires on a 401 from an ordinary protected endpoint", async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetchOnce(401, "Not authenticated");
+
+    await expect(getRounds()).rejects.toBeInstanceOf(ApiError);
+
+    expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it("does not fire on the ordinary 'am I signed in' check", async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetchOnce(401, "Not authenticated");
+
+    await expect(getCurrentUser()).rejects.toBeInstanceOf(ApiError);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not fire on a login failure", async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetchOnce(401, "Incorrect email or password");
+
+    await expect(
+      login({ email: "jane@example.com", password: "wrong-password" })
+    ).rejects.toBeInstanceOf(ApiError);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does not fire on a non-401 error", async () => {
+    const handler = vi.fn();
+    setUnauthorizedHandler(handler);
+    mockFetchOnce(500, "Internal server error");
+
+    await expect(getRounds()).rejects.toBeInstanceOf(ApiError);
+
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("does nothing when no handler is registered", async () => {
+    setUnauthorizedHandler(null);
+    mockFetchOnce(401, "Not authenticated");
+
+    // The point of this test is that this doesn't throw a "handler is not
+    // a function" error on top of the expected ApiError.
+    await expect(getRounds()).rejects.toBeInstanceOf(ApiError);
   });
 });

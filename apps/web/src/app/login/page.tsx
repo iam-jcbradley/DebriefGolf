@@ -1,7 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useState, type FormEvent } from "react";
 import { NavBar } from "@/components/nav-bar";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,8 +13,14 @@ import { useCurrentUser } from "@/lib/current-user";
 
 type Mode = "sign-in" | "create-account";
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  // Set by CurrentUserProvider's unauthorized handler when a request 401s
+  // out from under a session this tab thought was still good — see its
+  // comment. Read once on mount's worth of params, not tied to `mode`, so
+  // switching to "create account" and back doesn't make the notice reappear.
+  const sessionExpired = searchParams.get("expired") === "1";
   const { user, signIn, signUp } = useCurrentUser();
   const [mode, setMode] = useState<Mode>("sign-in");
   const [name, setName] = useState("");
@@ -70,6 +77,9 @@ export default function LoginPage() {
         ) : (
           <Card className="mt-8">
             <CardContent className="pt-6">
+              {sessionExpired && !creating && (
+                <p className="mb-5 text-sm text-muted-foreground">Signed out — sign in again.</p>
+              )}
               <form onSubmit={handleSubmit} className="flex flex-col gap-5">
                 {creating && (
                   <label className="flex flex-col gap-1 text-sm" htmlFor="name">
@@ -108,9 +118,18 @@ export default function LoginPage() {
                       required
                     />
                   </label>
-                  {creating && (
+                  {creating ? (
                     <p className="mt-2 text-xs text-muted-foreground">
                       At least 10 characters. Length beats punctuation.
+                    </p>
+                  ) : (
+                    <p className="mt-2 text-xs">
+                      <Link
+                        href="/forgot-password"
+                        className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                      >
+                        Forgot your password?
+                      </Link>
                     </p>
                   )}
                 </div>
@@ -150,5 +169,13 @@ export default function LoginPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginForm />
+    </Suspense>
   );
 }
