@@ -29,7 +29,8 @@ async function addShot(user: ReturnType<typeof userEvent.setup>) {
 describe("RoundAuditPage", () => {
   it("renders the round id from the route", () => {
     render(<RoundAuditPage />);
-    expect(screen.getByText("Audit round #42")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Audit round" })).toBeInTheDocument();
+    expect(screen.getByText("Round 42")).toBeInTheDocument();
   });
 
   it("lists shots as they're added and shows a start-review button", async () => {
