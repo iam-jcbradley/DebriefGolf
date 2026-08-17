@@ -1,7 +1,9 @@
-FROM node:22-slim AS base
+FROM node:26-slim AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable
+# Node 26 no longer ships corepack by default (removed from core in
+# Node 25+); install it explicitly before enabling it.
+RUN npm install -g corepack@latest && corepack enable
 WORKDIR /app
 COPY package.json ./
 RUN corepack install
