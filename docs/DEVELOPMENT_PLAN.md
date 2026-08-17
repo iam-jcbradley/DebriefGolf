@@ -1064,6 +1064,14 @@ response shapes are identical, only how they're computed and delivered.
   one query per round — deferred here because it requires both streams
   consistently ordered (round id rather than the current `played_at`), which
   touches more than this phase's stated scope.
+- **A mid-stream failure on `GET /me/export` now serves a truncated 200
+  instead of a clean 500.** `StreamingResponse` commits to the 200 status
+  and starts sending bytes before every round has been fetched, so a DB
+  error partway through (round 150 of 300, say) produces an incomplete JSON
+  body under a success status rather than the old buffered version's
+  all-or-nothing response. Inherent to streaming and a reasonable cost for
+  the memory bound this item exists to deliver, but worth naming plainly for
+  a GDPR/CCPA access endpoint rather than leaving it implicit.
 - **`GET /practice/combines` only picked up a small win** (315.1ms →
   292.6ms) because its dominant cost — `fetch_on_course_shots` for the
   Strokes-Gained bracket and `evaluate_putting` — was never the IQR

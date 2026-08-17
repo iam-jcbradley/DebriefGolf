@@ -76,6 +76,34 @@ class TestClubCarryDispersionSql:
         assert result["7-Iron"].excluded_outliers == 0
         assert result["7-Iron"].mean == expected.mean
 
+    def test_at_min_samples_for_iqr_boundary_still_rejects_outlier(
+        self, db_session: Session, user: User
+    ) -> None:
+        # Exactly MIN_SAMPLES_FOR_IQR (4) samples, with a real outlier among
+        # them — pins down the `n >= MIN_SAMPLES_FOR_IQR` boundary in the
+        # SQL's `case()` fence, which no other test exercises with an
+        # outlier actually present at exactly the threshold.
+        samples = [148.0, 150.0, 152.0, 400.0]
+        _seed_shots(db_session, user, {"Driver": samples})
+
+        result = club_carry_dispersion_sql(db_session, user.id)
+        expected = compute_dispersion(samples)
+
+        assert expected.excluded_outliers == 1  # sanity: the fixture is a real boundary case
+        stats = result["Driver"]
+        assert stats.count == expected.count
+        assert stats.excluded_outliers == expected.excluded_outliers
+        assert stats.mean == expected.mean
+        assert stats.median == expected.median
+        assert abs(stats.stdev - expected.stdev) < 1e-9
+
+    def test_excludes_empty_string_club(self, db_session: Session, user: User) -> None:
+        # shot_carry_distance's `if not shot.club` treats "" the same as
+        # None — the SQL filter has to match that, not just `IS NOT NULL`.
+        _seed_shots(db_session, user, {"": [150.0, 152.0, 148.0, 151.0]})
+
+        assert club_carry_dispersion_sql(db_session, user.id) == {}
+
     def test_multiple_clubs_computed_independently(
         self, db_session: Session, user: User
     ) -> None:

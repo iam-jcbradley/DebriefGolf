@@ -20,8 +20,9 @@ quartiles `numpy.percentile`'s default (linear-interpolation) method does,
 so the ordering and the outlier fence it feeds
 (`app/services/smart_bag.py`'s `reject_outliers_iqr`) can move into SQL
 without changing which shots get rejected — verified to agree with the
-Python implementation to the float on the seeded demo round, including its
-planted outlier, in `tests/test_shot_queries.py`. Lateral dispersion stays
+Python implementation to the float in `tests/test_shot_queries.py`, on the
+same six-sample planted-outlier scenario `tests/test_bag_route.py` already
+exercises against the live endpoint. Lateral dispersion stays
 in Python: it's a smaller query (only located shots) and pushing its
 flat-earth trig into SQL would risk a third copy of
 `app/services/geometry.py`'s `YARDS_PER_DEGREE_LAT` alongside the existing
@@ -109,7 +110,11 @@ def club_carry_dispersion_sql(
         select(Shot.club.label("club"), carry_expr.label("carry"))
         .join(Round, Shot.round_id == Round.id)
         .where(Round.user_id == user_id)
+        # Matches shot_carry_distance's `if not shot.club or shot.club ==
+        # "Putter"`: `not shot.club` is true for both None and "", so both
+        # have to be excluded here too, not just NULL.
         .where(Shot.club.is_not(None))
+        .where(Shot.club != "")
         .where(Shot.club != "Putter")
         .where(carry_expr > 0)
     ).cte("carries")
