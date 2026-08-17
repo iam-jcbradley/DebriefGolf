@@ -25,21 +25,27 @@ exposed to Tailwind via `@theme inline` (so `bg-primary`, `text-muted-foreground
 parallel `.dark` palette exists for completeness but isn't the focus of
 this brief — paper-and-ink is a light-mode-first aesthetic.
 
-| Token | Hex | Use |
-|---|---|---|
-| `--background` | `#F3EEE1` | Page background — warm aged paper, never stark white |
-| `--card` | `#FBF8F0` | Card/surface — a hair lighter than the page, distinguished by a hairline border, not elevation |
-| `--foreground` | `#211D17` | Body text ("ink") — warm near-black, never pure `#000` |
-| `--muted-foreground` | `#726A5A` | Secondary text, captions, overlines |
-| `--muted` | `#EAE2CE` | Subtle fill — hover states, quiet backgrounds |
-| `--border` | `#DED2B4` | Hairline rules — the primary way this system shows structure |
-| `--primary` | `#28402F` | The one accent — deep fairway green. CTAs, active states, small emphasis only |
-| `--accent-hover` | `#1D3123` | Primary button/link hover — a deliberately darker green, not a lighter tint |
-| `--secondary` | `#E7DFCB` | Secondary button surface |
-| `--destructive` | `#9C4530` | Errors — a muted clay/rust, not a stock red |
-| `--status-good` | `#3F6B4A` | Positive status (distinct from `--primary` so CTAs and status don't compete) |
-| `--status-warning` | `#B9812C` | Caution — muted ochre |
-| `--status-critical` | `#9C4530` | Same rust as `--destructive` — one "something's wrong" color, not two |
+The **Safe as** column says what a token may be used for, measured against
+`--card` (`#FBF8F0`): **Text** clears the 4.5:1 WCAG AA floor for normal
+text; **Fill only** clears 3:1 for non-text (borders, meter fills, chart
+marks) but must never carry body text.
+
+| Token | Hex | Safe as | Use |
+|---|---|---|---|
+| `--background` | `#F3EEE1` | — | Page background — warm aged paper, never stark white |
+| `--card` | `#FBF8F0` | — | Card/surface — a hair lighter than the page, distinguished by a hairline border, not elevation |
+| `--foreground` | `#211D17` | Text | Body text ("ink") — warm near-black, never pure `#000` |
+| `--muted-foreground` | `#726A5A` | Text | Secondary text, captions, kickers |
+| `--muted` | `#EAE2CE` | Fill only | Subtle fill — hover states, quiet backgrounds |
+| `--border` | `#DED2B4` | Fill only | Hairline rules — the primary way this system shows structure |
+| `--primary` | `#28402F` | Text | The one accent — deep fairway green. CTAs, active states, small emphasis only |
+| `--accent-hover` | `#1D3123` | Text | Primary button/link hover — a deliberately darker green, not a lighter tint |
+| `--secondary` | `#E7DFCB` | Fill only | Secondary button surface |
+| `--destructive` | `#9C4530` | Text | Errors — a muted clay/rust, not a stock red |
+| `--status-good` | `#3F6B4A` | Text | Positive status (distinct from `--primary` so CTAs and status don't compete) |
+| `--status-warning` | `#8A5E1B` | Text | Caution — muted ochre |
+| `--status-serious` | `#A4502E` | Text | Between warning and critical. Currently unused — wire it up or delete it, don't let it rot |
+| `--status-critical` | `#9C4530` | Text | Same rust as `--destructive` — one "something's wrong" color, not two |
 
 **Rules:**
 - **One accent.** Fairway green is it. Don't introduce a second bright
@@ -51,6 +57,12 @@ this brief — paper-and-ink is a light-mode-first aesthetic.
   defaults to sit inside this palette — this is a deliberate, considered
   override for brand coherence, not an oversight of the "fixed" comment
   that used to guard them.
+- **Check contrast before retinting.** The palette is muted by design,
+  which puts warm mid-tones close to the AA floor: `--status-warning`
+  shipped at `#B9812C` for several phases at 3.17:1 against `--card`,
+  used as the text for "Needs audit" — the least legible text in the app
+  was the text saying something needed attention. Muted is the aesthetic;
+  illegible isn't.
 
 ## 3. Typography
 
@@ -62,13 +74,20 @@ Tailwind utilities (or `--font-heading`, which aliases to the serif).
 **Overline labels** — small-caps-style section kickers ("ROUND SUMMARY",
 "TODAY'S DEBRIEF"): uppercase, `0.14em` letter-spacing, `text-xs`,
 `text-muted-foreground` by default. Use the `<Overline>` component or the
-`.overline` utility class directly. True OpenType small-caps aren't
+`.kicker` utility class directly. True OpenType small-caps aren't
 reliable across this font pairing, so this is an uppercase+tracking
 approximation — good enough, and more portable.
 
+> **The class is `.kicker`, not `.overline`.** Tailwind ships a built-in
+> `overline` utility for `text-decoration-line: overline`, and the
+> utilities layer outranks `@layer components` — so while the class was
+> named `.overline`, every kicker, nav link, and stat caption in the app
+> silently drew a stray rule above itself. Don't rename it back, and don't
+> write `class="overline"` expecting this style.
+
 | Role | Class / component | Notes |
 |---|---|---|
-| Overline | `<Overline>` / `.overline` | Section kickers, stat captions |
+| Overline | `<Overline>` / `.kicker` | Section kickers, stat captions |
 | H1 | `font-serif text-3xl md:text-4xl font-medium` | Page titles |
 | H2 | `font-serif text-2xl font-medium` | Section headings |
 | H3 / Card title | `font-serif text-xl font-medium` | `<CardTitle>` |
@@ -88,6 +107,29 @@ approximation — good enough, and more portable.
   never the default Tailwind `shadow-lg`/`shadow-xl` scale.
 - **Spacing:** standard Tailwind scale, no custom tokens. Prefer generous
   whitespace over dense stacking — cards use `p-6`, not `p-3`.
+- **Content measure.** Pick from these three; don't invent a fourth, or
+  the content column visibly jumps as a reader moves between pages:
+  | Width | For |
+  |---|---|
+  | `max-w-5xl` | Analytics and dashboard pages — multi-column, side-by-side cards (`/`, `/practice`, hole replay, manual shot entry) |
+  | `max-w-3xl` | Reading pages and single-flow forms (`/rounds`, `/rounds/new`, settings, the audit wizard) |
+  | `max-w-md` | Auth only (`/login`) |
+
+**Icons.** Typographic glyphs — `✦ • ↑ ↓ ✓ ⚠ ←` — are in. Icon *sets* are
+out: no Lucide, no Heroicons, no glyph fonts, and no icon-only buttons. A
+control that needs a label gets a word ("Menu", "Close", "Edit geometry"),
+not a hamburger. This rule was being cited from memory in code comments
+before it was ever written down here, which is how conventions get lost.
+
+**Focus.** A crisp `outline-2 outline-offset-2 outline-ring`, not the
+shadcn-default blurred `ring` — a soft halo is the same kind of glow the
+"avoid shadows" rule above already rejects for surfaces, and it's the one
+place the `destructive` button used to look pink instead of rust.
+`Input`/`Select` thicken their bottom rule to 2px on focus (`-mb-px`
+cancels the added height so nothing shifts) and add a faint `bg-muted/40`
+tint — a 1px color-only change undershoots WCAG 2.4.13's indicator-size
+floor, and next to a `.kicker` label in the same muted palette it was easy
+to miss which field actually had focus.
 
 ## 5. Imagery & texture
 
@@ -134,10 +176,13 @@ All in `apps/web/src/components/ui/` unless noted.
   numeral. Reuse this pattern anywhere a player's identity needs a
   formal, "membership card" treatment rather than a generic profile
   widget.
+- **`Select`** (`select.tsx`) — the `Input` treatment for dropdowns, so a
+  `<select>` doesn't read as a leftover browser default beside one. Same
+  underline, same focus color. Pair with an `<Overline>` label above.
 - **`NavBar`** (`src/components/nav-bar.tsx`, not `ui/`) — a masthead, not
-  a toolbar: serif wordmark, uppercase text links (via `.overline`), an
+  a toolbar: serif wordmark, uppercase text links (via `.kicker`), an
   understated underline (not a pill or tab background) for the active
-  page.
+  page. Collapses behind a text "Menu"/"Close" toggle below `md`.
 
 ## 7. Tone of voice in UI copy
 

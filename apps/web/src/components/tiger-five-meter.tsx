@@ -42,7 +42,11 @@ export function TigerFiveMeter({ tigerFive }: TigerFiveMeterProps) {
       </CardHeader>
 
       <CardContent>
-        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {/* Three-up only once the card itself is genuinely wide. This card
+            sits in the dashboard's `md:grid-cols-2`, so at 768–1024 a
+            `sm:grid-cols-3` gave ~95px tiles and captions like "Blown
+            Recoveries" overflowed their borders. */}
+        <dl className="grid grid-cols-2 gap-3 xl:grid-cols-3">
           {VIOLATIONS.map(({ key, label }) => {
             const count = tigerFive[key];
             return (

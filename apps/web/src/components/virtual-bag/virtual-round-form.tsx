@@ -4,6 +4,7 @@ import { type FormEvent, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Overline } from "@/components/ui/overline";
+import { Select } from "@/components/ui/select";
 import { ApiError, createVirtualRound, type SimPlatform, type VirtualRound } from "@/lib/api";
 
 const PLATFORMS: { value: SimPlatform; label: string }[] = [
@@ -56,18 +57,17 @@ export function VirtualRoundForm({ onCreated }: VirtualRoundFormProps) {
     <form onSubmit={handleSubmit} className="grid gap-4 sm:grid-cols-2">
       <label className="flex flex-col gap-1 text-sm" htmlFor="virtual-round-platform">
         <Overline as="span">Platform</Overline>
-        <select
+        <Select
           id="virtual-round-platform"
           value={platform}
           onChange={(event) => setPlatform(event.target.value as SimPlatform)}
-          className="border-0 border-b border-border bg-transparent py-1 text-sm outline-none focus-visible:border-primary"
         >
           {PLATFORMS.map((p) => (
             <option key={p.value} value={p.value}>
               {p.label}
             </option>
           ))}
-        </select>
+        </Select>
       </label>
 
       <label className="flex flex-col gap-1 text-sm" htmlFor="virtual-round-course">
