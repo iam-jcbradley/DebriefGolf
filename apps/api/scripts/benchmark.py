@@ -25,12 +25,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 from sqlalchemy import URL, Engine, create_engine, make_url, text  # noqa: E402
 from sqlmodel import Session, select  # noqa: E402
 
+from alembic import command  # noqa: E402
 from app.api.deps import get_current_user  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from app.db.session import get_session  # noqa: E402
@@ -115,13 +115,19 @@ def _seed_user(session: Session, email: str, course_id: int, hole_ids: list[int]
                     "hole_id": hole_id,
                     "shot_number": shot_number,
                     "club": "Putter" if putt else rng.choice(CLUBS[:-1]),
-                    "start_lie": Lie.green if putt else Lie.tee if shot_number == 1 else Lie.fairway,
+                    "start_lie": (
+                        Lie.green if putt else Lie.tee if shot_number == 1 else Lie.fairway
+                    ),
                     "end_lie": Lie.hole if holed else Lie.green if putt else Lie.fairway,
-                    "start_distance_yards": max(4.0, 400.0 - shot_number * 90 + rng.uniform(-20, 20)),
+                    "start_distance_yards": max(
+                        4.0, 400.0 - shot_number * 90 + rng.uniform(-20, 20)
+                    ),
                     # A holed shot is at the hole: distance must be exactly 0,
                     # or the SG benchmark lookup is asked for "expected strokes
                     # from 40 yards, in the hole".
-                    "end_distance_yards": 0.0 if holed else max(1.0, 400.0 - (shot_number + 1) * 90),
+                    "end_distance_yards": (
+                        0.0 if holed else max(1.0, 400.0 - (shot_number + 1) * 90)
+                    ),
                     "strokes_gained": rng.uniform(-0.6, 0.4),
                     "tag": None,
                     "location": None,

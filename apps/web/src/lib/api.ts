@@ -28,6 +28,11 @@ export interface RoundShotAnalytics {
   category: SGCategory;
   strokes_gained: number;
   approach_leave: ApproachLeave;
+  // Whether this shot's approach_leave used the real geometric rule
+  // (Phase 14) or fell back to the distance/lie proxy — both false for
+  // the vast majority of rounds, which predate pin-tracking.
+  has_pin: boolean;
+  has_green_boundary: boolean;
 }
 
 export interface RoundAnalytics {
@@ -125,6 +130,8 @@ export interface HoleReplayShot {
   strokes_gained: number | null;
   tag: string | null;
   approach_leave: ApproachLeave;
+  has_pin: boolean;
+  has_green_boundary: boolean;
   location: LatLngPoint | null;
 }
 
@@ -136,6 +143,10 @@ export interface HoleReplay {
   tee: LatLngPoint | null;
   green_center: LatLngPoint | null;
   green_boundary: LatLngPoint[] | null;
+  // Where the pin actually was this round (Phase 14) — null for the
+  // common case of a round with no pin recorded, in which case the aim
+  // line and short-siding verdicts fall back to green_center.
+  pin: LatLngPoint | null;
   shots: HoleReplayShot[];
   short_sided_count: number;
 }
@@ -254,6 +265,18 @@ export interface CreatedShot {
   strokes_gained: number | null;
   tag: string | null;
   location: LatLngPoint | null;
+}
+
+export interface PinCreateInput {
+  hole_number: number;
+  location: LatLngPoint;
+}
+
+export interface CreatedPin {
+  id: number;
+  hole_id: number;
+  hole_number: number;
+  location: LatLngPoint;
 }
 
 export class ApiError extends Error {
@@ -383,6 +406,21 @@ export function submitRoundShots(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ shots }),
+  });
+}
+
+/** A second placement for the same hole replaces the first rather than
+ * duplicating it — a correction, not a second pin. Its own call rather
+ * than folded into submitRoundShots: a pin isn't a shot, held in the same
+ * draft but submitted alongside, not inside, the shots payload. */
+export function submitRoundPins(
+  roundId: number,
+  pins: PinCreateInput[]
+): Promise<CreatedPin[]> {
+  return apiFetch<CreatedPin[]>(`/api/rounds/${roundId}/pins/bulk`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ pins }),
   });
 }
 
