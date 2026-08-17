@@ -75,7 +75,8 @@ describe("RoundDetailPage", () => {
   it("renders the round id in the heading", () => {
     mockGetRoundHoles.mockReturnValue(new Promise(() => {}));
     render(<RoundDetailPage />);
-    expect(screen.getByText("Round #1 — Hole Replay")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Hole replay" })).toBeInTheDocument();
+    expect(screen.getByText("Round 1")).toBeInTheDocument();
   });
 
   it("shows a message when the round has no course assigned", async () => {

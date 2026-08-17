@@ -27,6 +27,9 @@ export interface HoleReplayMapProps {
   /** When set, clicking the map reports the clicked GPS point here instead
    * of the map being purely read-only — see `HoleReplaySvgProps.onPick`. */
   onPick?: (latlng: LatLngPoint) => void;
+  /** Shot to emphasize on the schematic — see `HoleReplaySvgProps`. Has no
+   * effect on the satellite map, whose markers Mapbox owns. */
+  highlightedShotNumber?: number | null;
   /** Overrides the NEXT_PUBLIC_MAPBOX_TOKEN env var — mainly for tests. */
   mapboxToken?: string;
 }
@@ -49,6 +52,7 @@ export function HoleReplayMap({
   ellipse,
   ellipseAnchorYards,
   onPick,
+  highlightedShotNumber = null,
   mapboxToken,
 }: HoleReplayMapProps) {
   const token = mapboxToken ?? ENV_MAPBOX_TOKEN;
@@ -149,7 +153,12 @@ export function HoleReplayMap({
 
   if (!token || mapError) {
     return (
-      <div>
+      // Caps the schematic fallback's width: `HoleReplaySvg` is fluid
+      // (`w-full`, fixed 2:3 aspect), and both callers of this component
+      // put it in a column well over 420px wide, where an unconstrained
+      // width would blow the height up to match — an ~890px-tall map in
+      // the manual-entry two-pane layout, once measured, not guessed.
+      <div className="max-w-[420px]">
         {!token && (
           <p className="mb-2 text-xs text-muted-foreground">
             Satellite imagery needs a Mapbox token (NEXT_PUBLIC_MAPBOX_TOKEN) — showing a
@@ -166,6 +175,7 @@ export function HoleReplayMap({
           ellipse={ellipse}
           ellipseAnchorYards={ellipseAnchorYards}
           onPick={onPick}
+          highlightedShotNumber={highlightedShotNumber}
         />
       </div>
     );

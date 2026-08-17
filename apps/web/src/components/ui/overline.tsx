@@ -13,14 +13,16 @@ export interface OverlineProps extends ComponentProps<"p"> {
 
 /**
  * Small-caps-style section label — "ROUND SUMMARY", "TODAY'S DEBRIEF".
- * Always uppercase, letter-spaced, small. See the `.overline` utility in
- * globals.css for the underlying styles and docs/STYLE_GUIDE.md for usage.
+ * Always uppercase, letter-spaced, small. See the `.kicker` utility in
+ * globals.css for the underlying styles and docs/STYLE_GUIDE.md for usage
+ * (it is not called `.overline` because Tailwind owns that name — see the
+ * note in globals.css).
  */
 function Overline({ as: Component = "p", accent = false, className, ...props }: OverlineProps) {
   return (
     <Component
       data-slot="overline"
-      className={cn("overline", accent && "text-primary", className)}
+      className={cn("kicker", accent && "text-primary", className)}
       {...props}
     />
   );

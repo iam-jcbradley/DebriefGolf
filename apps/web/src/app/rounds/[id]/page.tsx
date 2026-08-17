@@ -2,11 +2,15 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import { HoleReplayLegend } from "@/components/hole-replay/hole-replay-legend";
 import { HoleReplayMap } from "@/components/hole-replay/hole-replay-map";
+import { HoleShotList } from "@/components/hole-replay/hole-shot-list";
 import { PinProvenanceNote } from "@/components/hole-replay/pin-provenance-note";
 import { ShortSidedBanner } from "@/components/hole-replay/short-sided-banner";
 import { SuckerPinAlert } from "@/components/hole-replay/sucker-pin-alert";
 import { NavBar } from "@/components/nav-bar";
+import { Overline } from "@/components/ui/overline";
 import { cn } from "@/lib/utils";
 import {
   ApiError,
@@ -33,6 +37,7 @@ export default function RoundDetailPage() {
     { longitudinal: number; lateral: number } | null
   >(null);
   const [suckerPinClub, setSuckerPinClub] = useState<string | null>(null);
+  const [highlightedShot, setHighlightedShot] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -111,8 +116,14 @@ export default function RoundDetailPage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-3xl px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">Round #{roundId} — Hole Replay</h1>
+      <main className="mx-auto max-w-5xl px-6 py-10">
+        <Link href="/rounds" className="text-sm text-muted-foreground underline hover:text-foreground">
+          &larr; Back to rounds
+        </Link>
+        <Overline accent className="mt-4">Round {roundId}</Overline>
+        <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+          Hole replay
+        </h1>
 
         {error && (
           <p role="alert" className="mt-4 text-destructive">
@@ -127,7 +138,7 @@ export default function RoundDetailPage() {
         )}
 
         {holes && holes.length > 0 && (
-          <div className="mt-4 flex flex-wrap gap-1">
+          <div className="mt-6 flex flex-wrap gap-1">
             {holes.map((hole) => (
               <button
                 key={hole.hole_number}
@@ -135,10 +146,10 @@ export default function RoundDetailPage() {
                 onClick={() => setSelectedHole(hole.hole_number)}
                 aria-current={selectedHole === hole.hole_number}
                 className={cn(
-                  "rounded-md border px-2.5 py-1 text-sm",
+                  "rounded-sm border px-2.5 py-1 text-sm tabular-nums transition-colors",
                   selectedHole === hole.hole_number
                     ? "border-primary bg-primary text-primary-foreground"
-                    : "hover:bg-muted"
+                    : "border-border hover:bg-muted"
                 )}
               >
                 {hole.hole_number}
@@ -154,14 +165,42 @@ export default function RoundDetailPage() {
               shortSidedCount={replay.short_sided_count}
             />
             {suckerPinClub && <SuckerPinAlert club={suckerPinClub} />}
-            <p className="text-sm text-muted-foreground">
-              Par {replay.par} · {replay.yardage}y
-            </p>
-            <PinProvenanceNote
-              hasPin={replay.pin !== null}
-              hasGreenBoundary={replay.green_boundary !== null}
-            />
-            <HoleReplayMap hole={replay} ellipse={ellipse} ellipseAnchorYards={ellipseAnchorYards} />
+
+            {/* Canvas and shot detail side by side (PRD §8) — the numbers
+                are what make the picture mean anything, and vice versa. */}
+            <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div>
+                <div className="flex items-baseline justify-between">
+                  <Overline>
+                    Hole {replay.hole_number} &middot; Par {replay.par}
+                  </Overline>
+                  <span className="text-sm text-muted-foreground tabular-nums">
+                    {replay.yardage}y
+                  </span>
+                </div>
+                <div className="mt-3">
+                  <HoleReplayMap
+                    hole={replay}
+                    ellipse={ellipse}
+                    ellipseAnchorYards={ellipseAnchorYards}
+                    highlightedShotNumber={highlightedShot}
+                  />
+                </div>
+                <HoleReplayLegend hasPin={replay.pin !== null} lateralExaggerated />
+                <div className="mt-3">
+                  <PinProvenanceNote
+                    hasPin={replay.pin !== null}
+                    hasGreenBoundary={replay.green_boundary !== null}
+                  />
+                </div>
+              </div>
+
+              <HoleShotList
+                shots={replay.shots}
+                highlightedShotNumber={highlightedShot}
+                onHighlight={setHighlightedShot}
+              />
+            </div>
           </div>
         )}
       </main>

@@ -38,21 +38,41 @@ const analytics: RoundAnalytics = {
 };
 
 describe("RoundSnapshot", () => {
-  it("renders the score and handicap bucket", () => {
+  it("leads with the score as the headline numeral, not buried in body text", () => {
     render(<RoundSnapshot round={round} analytics={analytics} />);
-    expect(screen.getByText(/Score: 78/)).toBeInTheDocument();
-    expect(screen.getByText(/Handicap bucket: 5/)).toBeInTheDocument();
+    expect(screen.getByText("78")).toBeInTheDocument();
+    expect(screen.getByText(/vs 5 handicap/)).toBeInTheDocument();
+  });
+
+  it("names the round by course and date so it identifies itself", () => {
+    render(
+      <RoundSnapshot round={round} analytics={analytics} courseName="Pinehurst Creek Golf Club" />
+    );
+    expect(screen.getByText("Pinehurst Creek Golf Club")).toBeInTheDocument();
+    // Rendered via toLocaleDateString, so assert on the year rather than a
+    // full formatted string that shifts with the runner's locale.
+    expect(screen.getByText(/2026/)).toBeInTheDocument();
+  });
+
+  it("shows score to par when the course par is known", () => {
+    render(<RoundSnapshot round={round} analytics={analytics} coursePar={72} />);
+    expect(screen.getByText("+6")).toBeInTheDocument();
+  });
+
+  it("omits the to-par figure when no course par is available", () => {
+    render(<RoundSnapshot round={round} analytics={analytics} coursePar={null} />);
+    expect(screen.queryByText("+6")).not.toBeInTheDocument();
   });
 
   it("renders all four SG categories with signed values", () => {
     render(<RoundSnapshot round={round} analytics={analytics} />);
-    expect(screen.getByText("SG: Off the Tee")).toBeInTheDocument();
+    expect(screen.getByText("Off the Tee")).toBeInTheDocument();
     expect(screen.getByText("+6.21")).toBeInTheDocument();
-    expect(screen.getByText("SG: Approach")).toBeInTheDocument();
+    expect(screen.getByText("Approach")).toBeInTheDocument();
     expect(screen.getByText("-2.52")).toBeInTheDocument();
-    expect(screen.getByText("SG: Around the Green")).toBeInTheDocument();
+    expect(screen.getByText("Around the Green")).toBeInTheDocument();
     expect(screen.getByText("+0.91")).toBeInTheDocument();
-    expect(screen.getByText("SG: Putting")).toBeInTheDocument();
+    expect(screen.getByText("Putting")).toBeInTheDocument();
     expect(screen.getByText("-7.29")).toBeInTheDocument();
   });
 
@@ -65,6 +85,6 @@ describe("RoundSnapshot", () => {
     render(
       <RoundSnapshot round={{ ...round, total_score: null }} analytics={analytics} />
     );
-    expect(screen.getByText(/Score: —/)).toBeInTheDocument();
+    expect(screen.getByText("—")).toBeInTheDocument();
   });
 });

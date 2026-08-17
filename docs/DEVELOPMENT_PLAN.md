@@ -1098,6 +1098,16 @@ them is waiting on a decision I can make or work I can do.
   capability. Worth designing once Phase 14 ships and there's real data on
   whether desk-based pin capture actually gets used, per that phase's own
   new acceptance criteria around `has_pin` being measurable.
+- **"Share" nav item removed pending a real spec** (found by a UX audit
+  walking every page, 2026-08-16). `NavBar` linked to `/share` as one of
+  PRD §8's five nav items, but no page, route, or backend ever existed
+  behind it, and nothing in the PRD beyond the §8 wireframe caption
+  describes what it should do — no public link, export, or share-token
+  concept is specified anywhere. A dead link in primary nav is worse than
+  a missing one, so it's removed (`nav-bar.tsx`) until there's an actual
+  design to build against: what gets shared (a round? the coach brief?),
+  with whom, and whether it's a public URL, a signed export, or something
+  else.
 
 New findings go here first; they move into a phase once there's enough of a
 theme to justify one.
