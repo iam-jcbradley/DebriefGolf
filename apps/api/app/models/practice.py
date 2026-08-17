@@ -12,7 +12,7 @@ class PracticeSession(SQLModel, table=True):
     has.
     """
 
-    __tablename__ = "practice_session"
+    __tablename__: str = "practice_session"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")
@@ -30,7 +30,7 @@ class PracticeShot(SQLModel, table=True):
     club_path_deg) rather than stored, since it's a pure function of the two
     columns already here."""
 
-    __tablename__ = "practice_shot"
+    __tablename__: str = "practice_shot"
 
     id: int | None = Field(default=None, primary_key=True)
     session_id: int = Field(foreign_key="practice_session.id", index=True, ondelete="CASCADE")

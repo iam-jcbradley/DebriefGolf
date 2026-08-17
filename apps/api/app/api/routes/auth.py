@@ -21,6 +21,7 @@ from app.api.deps import (
 )
 from app.api.routes.rounds import refresh_user_strokes_gained
 from app.core.config import settings
+from app.core.orm_typing import persisted
 from app.core.security import (
     WeakPasswordError,
     create_reset_token,
@@ -49,7 +50,7 @@ class UserOut(BaseModel):
     @classmethod
     def of(cls, user: User) -> "UserOut":
         return cls(
-            id=user.id,
+            id=persisted(user.id),
             email=user.email,
             name=user.name,
             handicap_index=user.handicap_index,
@@ -95,7 +96,7 @@ def register(payload: RegisterIn, session: SessionDep, response: Response) -> Us
     session.commit()
     session.refresh(user)
 
-    set_session_cookie(response, user.id)
+    set_session_cookie(response, persisted(user.id))
     return UserOut.of(user)
 
 
@@ -110,7 +111,7 @@ def login(payload: LoginIn, session: SessionDep, response: Response) -> UserOut:
     if user is None or not verify_password(user.password_hash, payload.password):
         raise HTTPException(status_code=401, detail="Incorrect email or password")
 
-    set_session_cookie(response, user.id)
+    set_session_cookie(response, persisted(user.id))
     return UserOut.of(user)
 
 
@@ -130,7 +131,7 @@ def forgot_password(payload: ForgotPasswordIn, session: SessionDep) -> ForgotPas
     into a way to test whether an email is registered."""
     user = session.exec(select(User).where(User.email == _normalized(payload.email))).first()
     if user is not None:
-        token = create_reset_token(user.id, user.password_hash)
+        token = create_reset_token(persisted(user.id), user.password_hash)
         reset_url = f"{settings.frontend_url}/reset-password/{token}"
         send_email(
             to=user.email,
@@ -182,7 +183,7 @@ def reset_password(payload: ResetPasswordIn, session: SessionDep, response: Resp
 
     # Resetting a password is itself proof of owning the account — sign
     # them straight in rather than making them log in again right after.
-    set_session_cookie(response, user.id)
+    set_session_cookie(response, persisted(user.id))
     return UserOut.of(user)
 
 

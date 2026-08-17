@@ -18,7 +18,7 @@ class GarminConnection(SQLModel, table=True):
     suffix precisely so that assigning a raw token to one looks wrong.
     """
 
-    __tablename__ = "garmin_connection"
+    __tablename__: str = "garmin_connection"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", unique=True, index=True, ondelete="CASCADE")

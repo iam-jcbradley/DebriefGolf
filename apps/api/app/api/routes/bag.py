@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, SessionDep
 from app.api.routes._shot_queries import club_gapping_with_lateral
+from app.core.orm_typing import persisted
 from app.services.dispersion import compute_dispersion_ellipse
 from app.services.smart_bag import compute_gaps
 
@@ -20,7 +21,7 @@ def get_smart_bag(user: CurrentUser, session: SessionDep) -> dict:
     # Carry dispersion is computed in SQL (Phase 16 — see
     # _shot_queries.py's club_carry_dispersion_sql), so this no longer
     # walks every shot the player has ever recorded into Python.
-    stats = club_gapping_with_lateral(session, user.id)
+    stats = club_gapping_with_lateral(session, persisted(user.id))
     gaps = compute_gaps(stats)
 
     clubs = []

@@ -1115,34 +1115,98 @@ serves a truncated 200 instead of a clean 500 (see below).
   is real but small next to the 300-round cost. Would be fixed by the same
   merge-join redesign as the rounds gap above.
 
-## Phase 17 — Type-Safety Follow-Through
+## Phase 17 — Type-Safety Follow-Through (done, one item needs a human)
 
 Goal: Phase 12 added pyright, fixed the two real bugs it found, and demoted
 five rule categories to `warning` with a written justification. That was the
 right call for a phase whose job was "add a type checker" — it is not a
 permanent answer, and the justification says so.
 
-- [ ] **Narrow the nullable-primary-key pattern.** ~60 of the 99 warnings are
-  `id: int | None` on rows that were just fetched or just committed and
-  therefore always have one. A small `persisted(obj)` helper that narrows the
-  type at the handful of boundaries beats ~90 individual ignore comments.
-- [ ] **Annotate geometry columns honestly.** `WKTElement` assigned to a
-  column declared `str | None` is the second-largest cluster. GeoAlchemy2 ships
-  type information; the models predate anyone checking.
-- [ ] **Re-promote the five rules to `error`** in `pyproject.toml` once the
-  count is zero, so the demotion doesn't quietly become permanent — that is
-  the entire point of doing this phase at all.
-- [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
-  but unverified, because this sandbox blocks registry blob fetches). This
-  needs no work — it verifies itself on the first CI run against GitHub's
-  runners — but it needs someone to *look*, and it should be checked off by a
-  human who did.
+The warning count had grown to 121 by the time this phase started (up from
+Phase 12's 101/103 — later phases kept adding SQLModel-facing code, as
+expected), and it broke down into more than the two named clusters:
+nullable-PK mismatches (~60) and geometry-column mismatches (~10) were real
+and exactly as described, but the largest remaining cluster (~50) was a
+third, unnamed shape — SQLModel types a class attribute's *static* access
+(`Shot.id`, `Shot.club`, `Round.played_at`) as the column's plain Python
+type (`int | None`, `str | None`, `datetime`) rather than the SQLAlchemy
+column-expression it actually is at that level, so `.order_by()`, `.join()`
+predicates, `.is_not()`, `.in_()`, and `.desc()` all fail to type-check even
+on perfectly correct SQLAlchemy code. This is a known, long-standing
+SQLModel/pyright gap (SQLModel's fields are Pydantic-typed for validation,
+not `Mapped[]`-typed for the ORM side), not something introduced here.
 
-**Acceptance criteria:** `uv run pyright` reports 0 errors and 0 warnings with
-all five rules at `error`. No new blanket `# type: ignore` — each remaining
-suppression, if any, names the specific upstream stub gap it works around.
-Test suite unchanged in count and all green, since this phase should change
-no behavior whatsoever.
+- [x] **Narrow the nullable-primary-key pattern.** `app/core/orm_typing.py`'s
+  `persisted(id_: T | None) -> T` raises `AssertionError` on `None`
+  (surfacing a real bug loudly, not silently returning a wrong type) and is
+  otherwise identity — applied at ~50 call sites across `app/api/routes/*.py`
+  and `app/db/seed.py` wherever a route reads `row.id`/`row.user_id`/etc. off
+  a row it just fetched or committed+refreshed.
+- [x] **Annotate geometry columns honestly.** `course.py`'s `Hole` fields,
+  `Shot.location`, and `RoundHolePin.location` are now typed `WKTElement`
+  (`| None` where nullable) instead of `str | None` — matching every
+  constructor call site (`_point()`/`_polygon()` in `courses.py`/`seed.py`,
+  `WKTElement(...)` in `rounds.py`), never `str`. `WKTElement` has no
+  Pydantic schema of its own, so each of those three model classes also
+  picked up `model_config = {"arbitrary_types_allowed": True}` — these
+  tables are never validated against untrusted input (always built
+  internally with a real `WKTElement`), so there's nothing to validate.
+- [x] **The unnamed third cluster.** `app/core/orm_typing.py`'s `col(attr:
+  Any) -> Any` is `Any`-typed identity, reached for only at query-
+  construction call sites where pyright is flatly wrong about what
+  `SomeModel.column` is — never to paper over an actual mismatch. Applied at
+  ~40 call sites. Two related, narrower stub gaps got scoped
+  `# type: ignore[the specific rule]` instead, each with an inline comment
+  naming the gap, since no type-level fix existed: SQLModel's typed
+  `select()` overloads cap at 4 positional columns (beyond that there's no
+  matching overload at all, typed or `Any`-typed — verified directly, not
+  assumed) — 6 call sites selecting 5+ raw columns; and a multi-column
+  select's row type resolves to a bare `tuple[...]` rather than the
+  named-attribute `Row` it actually is at runtime once `.label()` is
+  involved — 2 call sites. `Shot.__table__` (real at runtime, untyped by
+  SQLModel) got the same treatment, 1 site. Two further issues turned out to
+  have real fixes instead of needing a workaround:
+  `app/services/parsers/fit_parser.py`'s `fitparse` library ships no type
+  stubs at all, so a local `_FitMessage` Protocol + `cast()` types its
+  messages precisely rather than guessing at a suppression; and
+  `app/services/putting.py`'s `evaluate_putting(shots: list[ShotView])`
+  rejected `list[Shot]` (a real caller, `rounds.py`'s single-round analytics
+  endpoint, which loads full `Shot` ORM objects) purely from `list`'s
+  invariance despite `Shot` structurally satisfying `ShotView` — changed to
+  `Sequence[ShotView]`, correct for a read-only parameter regardless of the
+  typing issue it also happens to fix.
+- [x] **Re-promote the five rules to `error`** in `pyproject.toml`. Verified
+  clean with `reportUnnecessaryTypeIgnoreComment` also enabled (temporarily,
+  not committed — it's a one-time check, not an ongoing rule this repo has
+  opted into) to confirm none of the 11 scoped ignores were stale; one
+  pre-existing ignore in `_shot_queries.py` (predating this phase) turned out
+  to have become unnecessary as a side effect of an unrelated fix nearby and
+  was removed.
+- [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
+  but unverified, because this sandbox blocks registry blob fetches). Still
+  needs a human to look at the first CI run against GitHub's runners and
+  check this box — no code changes this phase touch that job either way.
+
+**Acceptance criteria, verified:** `uv run pyright app/` reports 0 errors, 0
+warnings, 0 informations with all five rules at `error`
+(`app/api/routes/rounds.py` alone went from 44 warnings to 0). Every
+remaining suppression is a scoped `# type: ignore[rule]` with an inline
+comment naming the specific gap — no bare `# type: ignore`, confirmed by
+grep. 400 backend tests, up from 397 at the start of this phase — the 3 new
+tests (`tests/test_orm_typing.py`, covering `persisted()`'s pass-through and
+raise-on-`None` paths and `col()`'s identity) are for the two new primitives
+this phase added, not a behavior change to anything existing; every other
+file's test count is identical, and none of their assertions changed. ruff
+clean. Verified live against the
+running dev stack: `GET /bag`, `/practice/delivery`, `/practice/combines`,
+`/me/export`, `/rounds?limit=1`, `/rounds/{id}/holes`,
+`/rounds/{id}/analytics`, `/rounds/{id}/holes/{n}/replay`, `/rounds/{id}/shots`,
+and `/courses` all called against the seeded demo account and inspected by
+hand — identical output to before this phase (same Strokes Gained totals,
+same putting percentages, same hole geometry). A Chromium pass over `/`,
+`/rounds`, `/rounds/{id}`, `/practice`, and `/virtual-bag` showed zero new
+console errors. 364 frontend tests unaffected (no frontend files changed —
+this phase is backend typing only).
 
 ## Not scheduled — blocked on something other than engineering time
 

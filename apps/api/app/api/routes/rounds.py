@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.api.uploads import read_upload
+from app.core.orm_typing import col, persisted
 from app.models import Course, Hole, Lie, Round, RoundHolePin, RoundStatus, Shot, User
 from app.services.approach import HoleGeometryContext, classify_approach_leave
 from app.services.geometry import LatLng, green_boundary_ring
@@ -42,15 +43,17 @@ def _persist_round_strokes_gained(session: Session, round_id: int, handicap_inde
     read, which is what it used to be.
     """
     shots = list(
-        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
+        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(col(Shot.id))).all()
     )
     if not shots:
         return
 
     holes = {
-        hole.id: hole
+        persisted(hole.id): hole
         for hole in session.exec(
-            select(Hole).join(Round, Hole.course_id == Round.course_id).where(Round.id == round_id)
+            select(Hole)
+            .join(Round, col(Hole.course_id) == Round.course_id)
+            .where(Round.id == round_id)
         ).all()
     }
     if not all(shot.hole_id in holes for shot in shots):
@@ -66,7 +69,9 @@ def _persist_round_strokes_gained(session: Session, round_id: int, handicap_inde
     # the Core table rather than the ORM entity: `session.execute(update(Shot),
     # [rows])` is interpreted as an ORM bulk-update-by-primary-key and demands
     # an `id` in every row, which isn't the statement wanted here.
-    shot_table = Shot.__table__
+    # SQLModel doesn't type __table__ even though it's a real attribute
+    # SQLAlchemy's declarative metaclass sets at runtime.
+    shot_table = Shot.__table__  # type: ignore[reportAttributeAccessIssue]
     session.execute(
         update(shot_table)
         .where(shot_table.c.id == bindparam("b_id"))
@@ -95,14 +100,14 @@ def _hole_geometry_contexts(
         return {}
 
     geo_rows = session.exec(
-        select(
+        select(  # type: ignore[reportCallIssue]
             Hole.id,
             func.ST_Y(Hole.tee_location).label("tee_lat"),
             func.ST_X(Hole.tee_location).label("tee_lng"),
             func.ST_Y(Hole.green_center).label("green_lat"),
             func.ST_X(Hole.green_center).label("green_lng"),
             func.ST_AsGeoJSON(Hole.green_boundary).label("green_boundary_geojson"),
-        ).where(Hole.id.in_(hole_ids))
+        ).where(col(Hole.id).in_(hole_ids))
     ).all()
 
     pin_rows = session.exec(
@@ -110,9 +115,16 @@ def _hole_geometry_contexts(
             RoundHolePin.hole_id,
             func.ST_Y(RoundHolePin.location).label("lat"),
             func.ST_X(RoundHolePin.location).label("lng"),
-        ).where(RoundHolePin.round_id == round_id, RoundHolePin.hole_id.in_(hole_ids))
+        ).where(RoundHolePin.round_id == round_id, col(RoundHolePin.hole_id).in_(hole_ids))
     ).all()
-    pin_by_hole_id = {row.hole_id: LatLng(lat=row.lat, lng=row.lng) for row in pin_rows}
+    # sqlmodel's typed select() overloads give a multi-column row's static
+    # type as a bare tuple[...], not the named-attribute Row it actually is
+    # at runtime (a `.label()`-derived name is a real runtime attribute) —
+    # another upstream stub gap, not a mistake in these attribute accesses.
+    pin_by_hole_id = {
+        row.hole_id: LatLng(lat=row.lat, lng=row.lng)  # type: ignore[reportAttributeAccessIssue]
+        for row in pin_rows
+    }
 
     geometry_by_hole_id: dict[int, HoleGeometryContext] = {}
     for row in geo_rows:
@@ -145,9 +157,13 @@ def _shot_locations(session: Session, round_id: int) -> dict[int, LatLng]:
             Shot.id,
             func.ST_Y(Shot.location).label("lat"),
             func.ST_X(Shot.location).label("lng"),
-        ).where(Shot.round_id == round_id, Shot.location.is_not(None))
+        ).where(Shot.round_id == round_id, col(Shot.location).is_not(None))
     ).all()
-    return {row.id: LatLng(lat=row.lat, lng=row.lng) for row in rows}
+    # Same tuple-typed-row stub gap as _hole_geometry_contexts's pin_rows above.
+    return {
+        row.id: LatLng(lat=row.lat, lng=row.lng)  # type: ignore[reportAttributeAccessIssue]
+        for row in rows
+    }
 
 
 def _resolve_round_holes(
@@ -185,7 +201,7 @@ def refresh_user_strokes_gained(session: Session, user: User) -> None:
     values silently describe the handicap they used to have.
     """
     for round_id in session.exec(select(Round.id).where(Round.user_id == user.id)).all():
-        _persist_round_strokes_gained(session, round_id, user.handicap_index)
+        _persist_round_strokes_gained(session, persisted(round_id), user.handicap_index)
 
 
 # Enough for a season of golf in one response, small enough that nobody
@@ -223,7 +239,7 @@ def list_rounds(
         session.exec(
             select(Round)
             .where(Round.user_id == user.id)
-            .order_by(Round.played_at.desc(), Round.id.desc())
+            .order_by(col(Round.played_at).desc(), col(Round.id).desc())
             .limit(limit)
             .offset(offset)
         ).all()
@@ -250,7 +266,7 @@ def create_round(payload: RoundCreateIn, user: CurrentUser, session: SessionDep)
         raise HTTPException(status_code=404, detail="Course not found")
 
     round_ = Round(
-        user_id=user.id,
+        user_id=persisted(user.id),
         course_id=payload.course_id,
         played_at=payload.played_at or datetime.now(UTC),
         total_score=payload.total_score,
@@ -452,7 +468,7 @@ async def upload_fit_activity(
     result = parse_fit_activity(contents)
 
     round_ = Round(
-        user_id=user.id,
+        user_id=persisted(user.id),
         played_at=result.started_at or datetime.now(UTC),
         status=result.status,
     )
@@ -478,7 +494,10 @@ def list_round_shots(
     # geoalchemy2's `WKBElement` for `location` — it isn't JSON-serializable,
     # so a plain `list[Shot]` response crashes on any shot with a GPS point.
     rows = session.exec(
-        select(
+        # sqlmodel's select() only has typed overloads up to 4 positional
+        # columns; beyond that pyright has no matching overload at all —
+        # a real upstream gap, not a mistake in this 12-column call.
+        select(  # type: ignore[reportCallIssue]
             Shot.id,
             Shot.hole_id,
             Shot.shot_number,
@@ -493,7 +512,7 @@ def list_round_shots(
             func.ST_X(Shot.location).label("lng"),
         )
         .where(Shot.round_id == round_id)
-        .order_by(Shot.id)
+        .order_by(col(Shot.id))
     ).all()
 
     return [
@@ -528,7 +547,7 @@ def get_round_analytics(
     handicap_index = user.handicap_index
 
     shots = list(
-        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(Shot.id)).all()
+        session.exec(select(Shot).where(Shot.round_id == round_id).order_by(col(Shot.id))).all()
     )
     if not shots:
         # A freshly-uploaded .FIT round (see POST /rounds/upload) has GPS
@@ -541,7 +560,7 @@ def get_round_analytics(
         }
 
     holes = {
-        hole.id: hole
+        persisted(hole.id): hole
         for hole in session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
     }
     if not all(shot.hole_id in holes for shot in shots):
@@ -568,7 +587,7 @@ def get_round_analytics(
     # load. The values are persisted when shots are recorded instead (see
     # `_persist_round_strokes_gained`); Tiger 5 gets them passed in rather
     # than reading them off ORM objects this endpoint had to mutate first.
-    sg_by_shot_id = {r.shot_id: r.strokes_gained for r in sg_summary.shots}
+    sg_by_shot_id = {persisted(r.shot_id): r.strokes_gained for r in sg_summary.shots}
 
     shots_by_hole: dict[int, list[Shot]] = defaultdict(list)
     for shot in shots:
@@ -594,7 +613,7 @@ def get_round_analytics(
                 "category": r.category.value,
                 "strokes_gained": round(r.strokes_gained, 3),
                 "approach_leave": classify_approach_leave(
-                    shot, shot_locations.get(shot.id), geometry
+                    shot, shot_locations.get(persisted(shot.id)), geometry
                 ).value,
                 "has_pin": bool(geometry and geometry.pin),
                 "has_green_boundary": bool(geometry and geometry.green_boundary),
@@ -639,7 +658,7 @@ def list_round_holes(
         return []
 
     holes = session.exec(
-        select(Hole).where(Hole.course_id == round_.course_id).order_by(Hole.number)
+        select(Hole).where(Hole.course_id == round_.course_id).order_by(col(Hole.number))
     ).all()
 
     # GROUP BY rather than loading every shot in the round to count them in
@@ -649,7 +668,7 @@ def list_round_holes(
         for hole_id, count in session.exec(
             select(Shot.hole_id, func.count())
             .where(Shot.round_id == round_id)
-            .group_by(Shot.hole_id)
+            .group_by(col(Shot.hole_id))
         ).all()
     }
 
@@ -658,7 +677,7 @@ def list_round_holes(
             "hole_number": hole.number,
             "par": hole.par,
             "yardage": hole.yardage,
-            "shot_count": shot_counts.get(hole.id, 0),
+            "shot_count": shot_counts.get(persisted(hole.id), 0),
         }
         for hole in holes
     ]
@@ -683,13 +702,14 @@ def get_hole_replay(
     if hole is None:
         raise HTTPException(status_code=404, detail="Hole not found")
 
-    geometry = _hole_geometry_contexts(session, [hole.id], round_id).get(hole.id)
+    hole_id = persisted(hole.id)
+    geometry = _hole_geometry_contexts(session, [hole_id], round_id).get(hole_id)
 
     shots = list(
         session.exec(
             select(Shot)
             .where(Shot.round_id == round_id, Shot.hole_id == hole.id)
-            .order_by(Shot.shot_number)
+            .order_by(col(Shot.shot_number))
         ).all()
     )
     shot_locations = _shot_locations(session, round_id)
@@ -706,11 +726,11 @@ def get_hole_replay(
             "strokes_gained": shot.strokes_gained,
             "tag": shot.tag,
             "approach_leave": classify_approach_leave(
-                shot, shot_locations.get(shot.id), geometry
+                shot, shot_locations.get(persisted(shot.id)), geometry
             ).value,
             "has_pin": bool(geometry and geometry.pin),
             "has_green_boundary": bool(geometry and geometry.green_boundary),
-            "location": _point_dict(shot_locations.get(shot.id)),
+            "location": _point_dict(shot_locations.get(persisted(shot.id))),
         }
         for shot in shots
     ]

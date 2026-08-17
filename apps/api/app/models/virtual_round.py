@@ -24,7 +24,7 @@ class VirtualRound(SQLModel, table=True):
     round.
     """
 
-    __tablename__ = "virtual_round"
+    __tablename__: str = "virtual_round"
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="user.id", index=True, ondelete="CASCADE")

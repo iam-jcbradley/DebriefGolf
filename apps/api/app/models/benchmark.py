@@ -14,7 +14,7 @@ class StrokesGainedBenchmark(SQLModel, table=True):
     the seeded distance points for a given lie/bucket.
     """
 
-    __tablename__ = "strokes_gained_benchmark"
+    __tablename__: str = "strokes_gained_benchmark"
     __table_args__ = (
         UniqueConstraint(
             "handicap_bucket", "lie", "distance_yards", name="uq_sg_benchmark_bucket_lie_distance"

@@ -36,6 +36,7 @@ TypeScript mirror.
 from sqlalchemy import case, func
 from sqlmodel import Session, select
 
+from app.core.orm_typing import col
 from app.models import Hole, Round, Shot
 from app.services.geometry import ShotGeometryRow, compute_lateral_by_club
 from app.services.shot_view import ShotView
@@ -53,14 +54,14 @@ def fetch_on_course_shots(session: Session, user_id: int) -> list[ShotView]:
     than ORM objects — see app/services/shot_view.py for why."""
     return list(
         session.exec(
-            select(
+            select(  # type: ignore[reportCallIssue]
                 Shot.club,
                 Shot.start_distance_yards,
                 Shot.end_distance_yards,
                 Shot.end_lie,
                 Shot.strokes_gained,
             )
-            .join(Round, Shot.round_id == Round.id)
+            .join(Round, col(Shot.round_id) == Round.id)
             .where(Round.user_id == user_id)
         ).all()
     )
@@ -71,7 +72,7 @@ def fetch_shot_geometry_rows(session: Session, user_id: int) -> list[ShotGeometr
     `compute_lateral_by_club` needs to turn a GPS point into a lateral
     aim-line offset."""
     query = (
-        select(
+        select(  # type: ignore[reportCallIssue]
             Shot.club,
             func.ST_Y(Shot.location).label("shot_lat"),
             func.ST_X(Shot.location).label("shot_lng"),
@@ -80,15 +81,15 @@ def fetch_shot_geometry_rows(session: Session, user_id: int) -> list[ShotGeometr
             func.ST_Y(Hole.green_center).label("green_lat"),
             func.ST_X(Hole.green_center).label("green_lng"),
         )
-        .join(Hole, Shot.hole_id == Hole.id)
-        .join(Round, Shot.round_id == Round.id)
+        .join(Hole, col(Shot.hole_id) == Hole.id)
+        .join(Round, col(Shot.round_id) == Round.id)
         .where(Round.user_id == user_id)
-        .where(Shot.club.is_not(None))
-        .where(Shot.location.is_not(None))
-        .where(Hole.tee_location.is_not(None))
-        .where(Hole.green_center.is_not(None))
+        .where(col(Shot.club).is_not(None))
+        .where(col(Shot.location).is_not(None))
+        .where(col(Hole.tee_location).is_not(None))
+        .where(col(Hole.green_center).is_not(None))
     )
-    return [ShotGeometryRow(**row._mapping) for row in session.exec(query)]  # type: ignore[arg-type]
+    return [ShotGeometryRow(**row._mapping) for row in session.exec(query)]
 
 
 def club_carry_dispersion_sql(
@@ -110,14 +111,14 @@ def club_carry_dispersion_sql(
     "inside the fence, or there was no fence", which is exactly what the
     Python version does in a second list comprehension.
     """
-    carry_expr = Shot.start_distance_yards - Shot.end_distance_yards
+    carry_expr = col(Shot.start_distance_yards) - col(Shot.end_distance_yards)
     carries = (
-        select(Shot.club.label("club"), carry_expr.label("carry"))
-        .join(Round, Shot.round_id == Round.id)
+        select(col(Shot.club).label("club"), carry_expr.label("carry"))
+        .join(Round, col(Shot.round_id) == Round.id)
         .where(Round.user_id == user_id)
         # A club of "" is as much "no club recorded" as NULL is, so both
         # get excluded here, not just NULL.
-        .where(Shot.club.is_not(None))
+        .where(col(Shot.club).is_not(None))
         .where(Shot.club != "")
         .where(Shot.club != "Putter")
         .where(carry_expr > 0)
@@ -143,7 +144,7 @@ def club_carry_dispersion_sql(
     kept = carries.c.carry.between(bounds.c.lower, bounds.c.upper) | bounds.c.lower.is_(None)
 
     query = (
-        select(
+        select(  # type: ignore[reportCallIssue]
             carries.c.club,
             func.count().filter(kept).label("count"),
             func.avg(carries.c.carry).filter(kept).label("mean"),

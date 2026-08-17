@@ -20,6 +20,7 @@ from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
 
 from app.core.config import settings
+from app.core.orm_typing import persisted
 from app.core.security import hash_password
 from app.db.session import engine
 from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, StrokesGainedBenchmark, User
@@ -283,7 +284,7 @@ def seed() -> None:
             tee_lat, tee_lng = lat, lng
             green_lat, green_lng = _move(tee_lat, tee_lng, bearing, yardage)
             hole = Hole(
-                course_id=course.id,
+                course_id=persisted(course.id),
                 number=number,
                 par=par,
                 yardage=yardage,
@@ -302,8 +303,8 @@ def seed() -> None:
 
         total_score = sum(len(build_hole_shots(h.number, h.par, h.yardage)) for h in holes)
         round_ = Round(
-            user_id=user.id,
-            course_id=course.id,
+            user_id=persisted(user.id),
+            course_id=persisted(course.id),
             total_score=total_score,
             status=RoundStatus.verified,
         )
@@ -323,8 +324,8 @@ def seed() -> None:
                 )
                 session.add(
                     Shot(
-                        round_id=round_.id,
-                        hole_id=hole.id,
+                        round_id=persisted(round_.id),
+                        hole_id=persisted(hole.id),
                         shot_number=shot_number,
                         club=s["club"],
                         start_lie=s["start_lie"],

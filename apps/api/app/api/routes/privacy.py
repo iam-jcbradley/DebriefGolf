@@ -30,6 +30,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep, clear_session_cookie
+from app.core.orm_typing import col, persisted
 from app.models import (
     GarminConnection,
     PracticeSession,
@@ -49,7 +50,12 @@ def _round_shots(session: Session, round_id: int) -> list[dict]:
     `WKBElement` for `location` on the ORM object, the same pitfall
     `GET /rounds/{id}/shots` already works around."""
     rows = session.exec(
-        select(
+        # sqlmodel's select() only has typed overloads up to 4 positional
+        # columns; beyond that there's no matching overload at all
+        # (its only variadic signature is the untyped implementation,
+        # which pyright doesn't treat as callable from outside the
+        # module) — a real upstream gap, not a mistake in this call.
+        select(  # type: ignore[reportCallIssue]
             Shot.id,
             Shot.hole_id,
             Shot.shot_number,
@@ -127,7 +133,7 @@ def _stream_user_export(session: Session, user: User) -> Iterator[str]:
 
     yield ',"rounds":['
     for i, r in enumerate(
-        session.exec(select(Round).where(Round.user_id == user_id).order_by(Round.played_at))
+        session.exec(select(Round).where(Round.user_id == user_id).order_by(col(Round.played_at)))
     ):
         yield ("," if i else "") + json.dumps(
             {
@@ -136,7 +142,7 @@ def _stream_user_export(session: Session, user: User) -> Iterator[str]:
                 "total_score": r.total_score,
                 "status": r.status.value,
                 "course_id": r.course_id,
-                "shots": _round_shots(session, r.id),
+                "shots": _round_shots(session, persisted(r.id)),
             }
         )
     yield "]"
@@ -146,7 +152,7 @@ def _stream_user_export(session: Session, user: User) -> Iterator[str]:
         session.exec(
             select(PracticeSession)
             .where(PracticeSession.user_id == user_id)
-            .order_by(PracticeSession.recorded_at)
+            .order_by(col(PracticeSession.recorded_at))
         )
     ):
         yield ("," if i else "") + json.dumps(
@@ -154,7 +160,7 @@ def _stream_user_export(session: Session, user: User) -> Iterator[str]:
                 "id": s.id,
                 "source": s.source,
                 "recorded_at": s.recorded_at.isoformat(),
-                "shots": _session_shots(session, s.id),
+                "shots": _session_shots(session, persisted(s.id)),
             }
         )
     yield "]"
