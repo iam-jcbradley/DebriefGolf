@@ -6,6 +6,7 @@ import { NavBar } from "@/components/nav-bar";
 import { SignedOut } from "@/components/signed-out";
 import { SettingsTabs } from "@/components/settings/settings-tabs";
 import { Button } from "@/components/ui/button";
+import { Overline } from "@/components/ui/overline";
 import {
   ApiError,
   disconnectGarmin,
@@ -80,11 +81,12 @@ function GarminConnectPanel({ playerName }: { playerName: string }) {
     }
   }
 
+  // No heading inside this panel: the page's own H1 already says "Garmin
+  // Connect", and repeating it made two headings with identical text.
   return (
-    <section className="rounded-xl border p-4">
-      <h2 className="text-lg font-semibold">Garmin Connect</h2>
-      <p className="mt-1 text-sm text-muted-foreground">
-        Link your Garmin Connect account for automatic round sync (PRD §4.1), for{" "}
+    <section className="rounded-md border border-border bg-card p-6">
+      <p className="text-sm text-muted-foreground">
+        Link your Garmin Connect account for automatic round sync, for{" "}
         <strong className="text-foreground">{playerName}</strong>.
       </p>
 
@@ -121,7 +123,11 @@ export default function GarminSettingsPage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-2xl px-6 py-10">
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <Overline accent>Settings</Overline>
+        <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
+          Garmin Connect
+        </h1>
         <SettingsTabs />
         <Suspense fallback={null}>
           <CallbackBanner />

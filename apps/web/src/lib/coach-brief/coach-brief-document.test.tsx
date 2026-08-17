@@ -25,9 +25,12 @@ const analytics: RoundAnalytics = {
     short_putt_count: 17, start_line_conversion_pct: 100,
   },
   shots: [
-    { shot_id: 1, category: "APP", strokes_gained: -0.5, approach_leave: "unclassified" },
-    { shot_id: 2, category: "APP", strokes_gained: -0.5, approach_leave: "short_sided" },
-    { shot_id: 3, category: "APP", strokes_gained: 0.2, approach_leave: "on_green" },
+    { shot_id: 1, category: "APP", strokes_gained: -0.5, approach_leave: "unclassified",
+      has_pin: false, has_green_boundary: false },
+    { shot_id: 2, category: "APP", strokes_gained: -0.5, approach_leave: "short_sided",
+      has_pin: false, has_green_boundary: false },
+    { shot_id: 3, category: "APP", strokes_gained: 0.2, approach_leave: "on_green",
+      has_pin: false, has_green_boundary: false },
   ],
 };
 

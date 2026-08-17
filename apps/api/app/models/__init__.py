@@ -3,6 +3,7 @@ from app.models.course import Course, Hole
 from app.models.garmin_connection import GarminConnection
 from app.models.practice import PracticeSession, PracticeShot
 from app.models.round import Round, RoundStatus
+from app.models.round_hole_pin import RoundHolePin
 from app.models.shot import Lie, Shot
 from app.models.user import User
 from app.models.virtual_round import SimPlatform, VirtualRound
@@ -15,6 +16,7 @@ __all__ = [
     "PracticeSession",
     "PracticeShot",
     "Round",
+    "RoundHolePin",
     "RoundStatus",
     "Lie",
     "Shot",
