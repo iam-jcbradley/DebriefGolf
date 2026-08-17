@@ -1,4 +1,4 @@
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { IDBFactory } from "fake-indexeddb";
 import { useParams, useRouter } from "next/navigation";
@@ -6,7 +6,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getHoleReplay,
   getRoundHoles,
+  submitRoundPins,
   submitRoundShots,
+  type CreatedPin,
   type CreatedShot,
   type HoleReplay,
   type HoleSummary,
@@ -32,6 +34,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
     getRoundHoles: vi.fn(),
     getHoleReplay: vi.fn(),
     submitRoundShots: vi.fn(),
+    submitRoundPins: vi.fn(),
   };
 });
 
@@ -40,6 +43,7 @@ const mockUseRouter = vi.mocked(useRouter);
 const mockGetRoundHoles = vi.mocked(getRoundHoles);
 const mockGetHoleReplay = vi.mocked(getHoleReplay);
 const mockSubmitRoundShots = vi.mocked(submitRoundShots);
+const mockSubmitRoundPins = vi.mocked(submitRoundPins);
 
 const holes: HoleSummary[] = [
   { hole_number: 1, par: 4, yardage: 400, shot_count: 0 },
@@ -49,7 +53,7 @@ const holes: HoleSummary[] = [
 function makeReplay(overrides: Partial<HoleReplay> = {}): HoleReplay {
   return {
     round_id: 42, hole_number: 1, par: 4, yardage: 400,
-    tee: { lat: 33.7, lng: -78.9 }, green_center: { lat: 33.7025, lng: -78.9 },
+    tee: { lat: 33.7, lng: -78.9 }, green_center: { lat: 33.7025, lng: -78.9 }, pin: null,
     green_boundary: null, shots: [], short_sided_count: 0,
     ...overrides,
   };
@@ -65,6 +69,7 @@ beforeEach(() => {
   mockGetRoundHoles.mockReset();
   mockGetHoleReplay.mockReset();
   mockSubmitRoundShots.mockReset();
+  mockSubmitRoundPins.mockReset();
   Element.prototype.getBoundingClientRect = vi.fn(() => ({
     left: 0, top: 0, width: 320, height: 480, right: 320, bottom: 480, x: 0, y: 0,
     toJSON: () => {},
@@ -78,7 +83,8 @@ describe("EnterRoundPage", () => {
 
     render(<EnterRoundPage />);
 
-    expect(screen.getByText("Enter round #42")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter shots" })).toBeInTheDocument();
+    expect(screen.getByText("Round 42")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "2" })).toBeInTheDocument();
   });
 
@@ -151,6 +157,31 @@ describe("EnterRoundPage", () => {
       ])
     );
     expect(mockPush).toHaveBeenCalledWith("/rounds/42");
+  });
+
+  it("saves a pin placement and reflects it on the map without touching the shot draft", async () => {
+    mockGetRoundHoles.mockResolvedValue(holes);
+    mockGetHoleReplay.mockResolvedValue(makeReplay());
+    mockSubmitRoundPins.mockResolvedValue([
+      { id: 1, hole_id: 10, hole_number: 1, location: { lat: 33.7026, lng: -78.9001 } },
+    ] as CreatedPin[]);
+    const user = userEvent.setup();
+
+    render(<EnterRoundPage />);
+    await screen.findByRole("img", { name: "Hole 1 replay" });
+
+    await user.click(screen.getByRole("button", { name: "Set today's pin" }));
+    fireEvent.click(screen.getByRole("img", { name: "Hole 1 replay" }), {
+      clientX: 160, clientY: 40,
+    });
+
+    await waitFor(() =>
+      expect(mockSubmitRoundPins).toHaveBeenCalledWith(42, [
+        { hole_number: 1, location: expect.any(Object) },
+      ])
+    );
+    // the shot draft flow is untouched by a pin placement
+    expect(screen.queryByText(/location set/i)).not.toBeInTheDocument();
   });
 
   it("removes a shot from the list", async () => {
