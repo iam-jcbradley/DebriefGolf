@@ -21,6 +21,15 @@ function fmtDelta(value: number | null): string {
  * so a range session's numbers can be trusted (or discounted) on the
  * course. */
 export function SimVsRealTable({ rows }: SimVsRealTableProps) {
+  // `rows` is keyed off on-course clubs, which exist as soon as a round is
+  // logged — independent of whether any launch monitor session ever ran.
+  // Gating only on `rows.length` let a golfer with zero R10/R50 data see a
+  // full table whose Range carry and Delta columns were "—" all the way
+  // down, restating what `DeliveryProfileTable` right above it already
+  // says in one line. Require at least one row with real range data before
+  // rendering the table at all.
+  const hasRangeData = rows.some((row) => row.range_carry_mean_yards !== null);
+
   return (
     <Card>
       <CardHeader>
@@ -28,7 +37,7 @@ export function SimVsRealTable({ rows }: SimVsRealTableProps) {
         <CardTitle className="text-lg">Sim vs. Real-World Gapping</CardTitle>
       </CardHeader>
       <CardContent>
-        {rows.length === 0 ? (
+        {!hasRangeData ? (
           <p className="text-sm text-muted-foreground">
             Needs both a launch monitor session and on-course rounds for at least one shared club.
           </p>

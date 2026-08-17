@@ -1,4 +1,3 @@
-import json
 from collections import defaultdict
 from datetime import UTC, datetime
 
@@ -10,8 +9,9 @@ from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.api.uploads import read_upload
-from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
-from app.services.approach import classify_approach_leave
+from app.models import Course, Hole, Lie, Round, RoundHolePin, RoundStatus, Shot, User
+from app.services.approach import HoleGeometryContext, classify_approach_leave
+from app.services.geometry import LatLng, green_boundary_ring
 from app.services.parsers.fit_parser import parse_fit_activity
 from app.services.putting import evaluate_putting
 from app.services.strokes_gained import compute_round_strokes_gained
@@ -74,6 +74,107 @@ def _persist_round_strokes_gained(session: Session, round_id: int, handicap_inde
         [{"b_id": r.shot_id, "b_sg": r.strokes_gained} for r in summary.shots if r.shot_id],
     )
     session.commit()
+
+
+def _point_dict(point: LatLng | None) -> dict | None:
+    return {"lat": point.lat, "lng": point.lng} if point else None
+
+
+def _hole_geometry_contexts(
+    session: Session, hole_ids: list[int], round_id: int
+) -> dict[int, HoleGeometryContext]:
+    """Raw-column geometry (tee, green center, green boundary) for a set of
+    holes, plus this round's recorded pin for each — geoalchemy2 hands back
+    a non-JSON-serializable `WKBElement` for any of these columns read via
+    the ORM, so everything here goes through `ST_Y`/`ST_X` instead (see
+    CLAUDE.md). What `classify_approach_leave`'s geometric rule needs,
+    keyed by `hole_id`; a hole missing from the result dict, or with a
+    `None` field, is exactly what tells that function to fall back to the
+    proxy."""
+    if not hole_ids:
+        return {}
+
+    geo_rows = session.exec(
+        select(
+            Hole.id,
+            func.ST_Y(Hole.tee_location).label("tee_lat"),
+            func.ST_X(Hole.tee_location).label("tee_lng"),
+            func.ST_Y(Hole.green_center).label("green_lat"),
+            func.ST_X(Hole.green_center).label("green_lng"),
+            func.ST_AsGeoJSON(Hole.green_boundary).label("green_boundary_geojson"),
+        ).where(Hole.id.in_(hole_ids))
+    ).all()
+
+    pin_rows = session.exec(
+        select(
+            RoundHolePin.hole_id,
+            func.ST_Y(RoundHolePin.location).label("lat"),
+            func.ST_X(RoundHolePin.location).label("lng"),
+        ).where(RoundHolePin.round_id == round_id, RoundHolePin.hole_id.in_(hole_ids))
+    ).all()
+    pin_by_hole_id = {row.hole_id: LatLng(lat=row.lat, lng=row.lng) for row in pin_rows}
+
+    geometry_by_hole_id: dict[int, HoleGeometryContext] = {}
+    for row in geo_rows:
+        green_boundary = (
+            green_boundary_ring(row.green_boundary_geojson)
+            if row.green_boundary_geojson
+            else None
+        )
+        geometry_by_hole_id[row.id] = HoleGeometryContext(
+            tee=LatLng(lat=row.tee_lat, lng=row.tee_lng) if row.tee_lat is not None else None,
+            green_center=(
+                LatLng(lat=row.green_lat, lng=row.green_lng)
+                if row.green_lat is not None
+                else None
+            ),
+            green_boundary=green_boundary,
+            pin=pin_by_hole_id.get(row.id),
+        )
+
+    return geometry_by_hole_id
+
+
+def _shot_locations(session: Session, round_id: int) -> dict[int, LatLng]:
+    """This round's shot GPS points, by `shot_id` — same raw-column
+    reasoning as `_hole_geometry_contexts`. A shot missing here has no GPS
+    (common for manual entry without a clicked map point), which is one of
+    the three things that sends `classify_approach_leave` to the proxy."""
+    rows = session.exec(
+        select(
+            Shot.id,
+            func.ST_Y(Shot.location).label("lat"),
+            func.ST_X(Shot.location).label("lng"),
+        ).where(Shot.round_id == round_id, Shot.location.is_not(None))
+    ).all()
+    return {row.id: LatLng(lat=row.lat, lng=row.lng) for row in rows}
+
+
+def _resolve_round_holes(
+    round_id: int, hole_numbers: set[int], user: User, session: Session
+) -> tuple[Round, dict[int, int | None]]:
+    """Ownership check, course-assignment check, and hole-number resolution
+    shared by both bulk-upsert endpoints below (`create_shots_bulk`,
+    `create_pins_bulk`) — a round with no course assigned yet (409) or a
+    hole number its course doesn't have (422) fails identically for either
+    kind of upsert, so both call this instead of maintaining their own copy.
+
+    Returns the owned round and its `{hole_number: hole_id}` map.
+    """
+    round_ = _owned_round(round_id, user, session)
+    if round_.course_id is None:
+        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
+
+    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
+    hole_id_by_number = {hole.number: hole.id for hole in holes}
+
+    unknown_numbers = sorted(hole_numbers - hole_id_by_number.keys())
+    if unknown_numbers:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
+        )
+    return round_, hole_id_by_number
 
 
 def refresh_user_strokes_gained(session: Session, user: User) -> None:
@@ -201,19 +302,9 @@ def create_shots_bulk(
     shot's club/lie/distances through this endpoint, only to (harmlessly)
     resubmit it unchanged.
     """
-    round_ = _owned_round(round_id, user, session)
-    if round_.course_id is None:
-        raise HTTPException(status_code=409, detail="Round has no course assigned yet")
-
-    holes = session.exec(select(Hole).where(Hole.course_id == round_.course_id)).all()
-    hole_id_by_number = {hole.number: hole.id for hole in holes}
-
-    unknown_numbers = sorted({s.hole_number for s in payload.shots} - hole_id_by_number.keys())
-    if unknown_numbers:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Round's course has no hole(s) numbered {unknown_numbers}",
-        )
+    _, hole_id_by_number = _resolve_round_holes(
+        round_id, {s.hole_number for s in payload.shots}, user, session
+    )
 
     existing_by_key = {
         (shot.hole_id, shot.shot_number): shot
@@ -277,6 +368,71 @@ def create_shots_bulk(
                 "strokes_gained": shot.strokes_gained,
                 "tag": s.tag,
                 "location": {"lat": s.location.lat, "lng": s.location.lng} if s.location else None,
+            }
+        )
+    return result
+
+
+class PinCreateIn(BaseModel):
+    hole_number: int
+    location: ShotLocationIn
+
+
+class BulkPinsIn(BaseModel):
+    pins: list[PinCreateIn]
+
+
+@router.post("/rounds/{round_id}/pins/bulk", status_code=201)
+def create_pins_bulk(
+    round_id: int, payload: BulkPinsIn, user: CurrentUser, session: SessionDep
+) -> list[dict]:
+    """Records where the pin actually was, per hole, for this round (Phase
+    14) — held in the same client-side draft as the hole's shots and
+    submitted alongside them, as its own call rather than folded into
+    `POST /rounds/{id}/shots/bulk`'s payload: a pin isn't a shot, and this
+    keeps both endpoints' contracts independently stable.
+
+    A second placement for the same hole replaces the first rather than
+    creating a second row — a mis-click correction, not a second pin;
+    `RoundHolePin`'s `UniqueConstraint("round_id", "hole_id")` is what makes
+    "replace" the only option a resubmit has anyway.
+    """
+    _, hole_id_by_number = _resolve_round_holes(
+        round_id, {p.hole_number for p in payload.pins}, user, session
+    )
+
+    existing_by_hole_id = {
+        pin.hole_id: pin
+        for pin in session.exec(
+            select(RoundHolePin).where(RoundHolePin.round_id == round_id)
+        ).all()
+    }
+
+    result_pairs: list[tuple[RoundHolePin, PinCreateIn]] = []
+    for p in payload.pins:
+        hole_id = hole_id_by_number[p.hole_number]
+        point = WKTElement(f"POINT({p.location.lng} {p.location.lat})", srid=4326)
+        existing = existing_by_hole_id.get(hole_id)
+        if existing is not None:
+            existing.location = point
+            session.add(existing)
+            result_pairs.append((existing, p))
+            continue
+        pin = RoundHolePin(round_id=round_id, hole_id=hole_id, location=point)
+        session.add(pin)
+        existing_by_hole_id[hole_id] = pin
+        result_pairs.append((pin, p))
+    session.commit()
+
+    result = []
+    for pin, p in result_pairs:
+        session.refresh(pin)
+        result.append(
+            {
+                "id": pin.id,
+                "hole_id": pin.hole_id,
+                "hole_number": p.hole_number,
+                "location": {"lat": p.location.lat, "lng": p.location.lng},
             }
         )
     return result
@@ -426,6 +582,25 @@ def get_round_analytics(
     )
     putting = evaluate_putting(shots)
 
+    geometry_by_hole_id = _hole_geometry_contexts(session, list(holes.keys()), round_id)
+    shot_locations = _shot_locations(session, round_id)
+
+    shot_payloads = []
+    for r, shot in zip(sg_summary.shots, shots, strict=True):
+        geometry = geometry_by_hole_id.get(shot.hole_id)
+        shot_payloads.append(
+            {
+                "shot_id": r.shot_id,
+                "category": r.category.value,
+                "strokes_gained": round(r.strokes_gained, 3),
+                "approach_leave": classify_approach_leave(
+                    shot, shot_locations.get(shot.id), geometry
+                ).value,
+                "has_pin": bool(geometry and geometry.pin),
+                "has_green_boundary": bool(geometry and geometry.green_boundary),
+            }
+        )
+
     return {
         "round_id": round_id,
         "handicap_bucket": sg_summary.handicap_bucket,
@@ -448,15 +623,7 @@ def get_round_analytics(
             "short_putt_count": putting.short_putt_count,
             "start_line_conversion_pct": putting.start_line_conversion_pct,
         },
-        "shots": [
-            {
-                "shot_id": r.shot_id,
-                "category": r.category.value,
-                "strokes_gained": round(r.strokes_gained, 3),
-                "approach_leave": classify_approach_leave(shot).value,
-            }
-            for r, shot in zip(sg_summary.shots, shots, strict=True)
-        ],
+        "shots": shot_payloads,
     }
 
 
@@ -516,20 +683,7 @@ def get_hole_replay(
     if hole is None:
         raise HTTPException(status_code=404, detail="Hole not found")
 
-    geo = session.exec(
-        select(
-            func.ST_Y(Hole.tee_location).label("tee_lat"),
-            func.ST_X(Hole.tee_location).label("tee_lng"),
-            func.ST_Y(Hole.green_center).label("green_lat"),
-            func.ST_X(Hole.green_center).label("green_lng"),
-            func.ST_AsGeoJSON(Hole.green_boundary).label("green_boundary_geojson"),
-        ).where(Hole.id == hole.id)
-    ).first()
-
-    green_boundary = None
-    if geo and geo.green_boundary_geojson:
-        ring = json.loads(geo.green_boundary_geojson)["coordinates"][0]
-        green_boundary = [{"lat": lat, "lng": lng} for lng, lat in ring]
+    geometry = _hole_geometry_contexts(session, [hole.id], round_id).get(hole.id)
 
     shots = list(
         session.exec(
@@ -538,19 +692,7 @@ def get_hole_replay(
             .order_by(Shot.shot_number)
         ).all()
     )
-
-    shot_locations: dict[int, dict] = {}
-    if shots:
-        location_rows = session.exec(
-            select(
-                Shot.id,
-                func.ST_Y(Shot.location).label("lat"),
-                func.ST_X(Shot.location).label("lng"),
-            ).where(
-                Shot.hole_id == hole.id, Shot.round_id == round_id, Shot.location.is_not(None)
-            )
-        ).all()
-        shot_locations = {row.id: {"lat": row.lat, "lng": row.lng} for row in location_rows}
+    shot_locations = _shot_locations(session, round_id)
 
     shot_payloads = [
         {
@@ -563,8 +705,12 @@ def get_hole_replay(
             "end_distance_yards": shot.end_distance_yards,
             "strokes_gained": shot.strokes_gained,
             "tag": shot.tag,
-            "approach_leave": classify_approach_leave(shot).value,
-            "location": shot_locations.get(shot.id),
+            "approach_leave": classify_approach_leave(
+                shot, shot_locations.get(shot.id), geometry
+            ).value,
+            "has_pin": bool(geometry and geometry.pin),
+            "has_green_boundary": bool(geometry and geometry.green_boundary),
+            "location": _point_dict(shot_locations.get(shot.id)),
         }
         for shot in shots
     ]
@@ -574,15 +720,14 @@ def get_hole_replay(
         "hole_number": hole.number,
         "par": hole.par,
         "yardage": hole.yardage,
-        "tee": (
-            {"lat": geo.tee_lat, "lng": geo.tee_lng} if geo and geo.tee_lat is not None else None
-        ),
-        "green_center": (
-            {"lat": geo.green_lat, "lng": geo.green_lng}
-            if geo and geo.green_lat is not None
+        "tee": _point_dict(geometry.tee if geometry else None),
+        "green_center": _point_dict(geometry.green_center if geometry else None),
+        "green_boundary": (
+            [{"lat": p.lat, "lng": p.lng} for p in geometry.green_boundary]
+            if geometry and geometry.green_boundary
             else None
         ),
-        "green_boundary": green_boundary,
+        "pin": _point_dict(geometry.pin if geometry else None),
         "shots": shot_payloads,
         "short_sided_count": sum(
             1 for s in shot_payloads if s["approach_leave"] == "short_sided"

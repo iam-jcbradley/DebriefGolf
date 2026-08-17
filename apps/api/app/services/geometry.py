@@ -13,6 +13,7 @@ data source, and both already exist in the schema (`Hole.tee_location`,
 `Hole.green_center`, `Shot.location`).
 """
 
+import json
 import math
 from dataclasses import dataclass
 
@@ -95,3 +96,44 @@ def offset_from_aim_line(tee: LatLng, green: LatLng, point: LatLng) -> AimLineOf
     lateral = point_east * perp_unit[0] + point_north * perp_unit[1]
 
     return AimLineOffset(longitudinal_yards=longitudinal, lateral_yards=lateral)
+
+
+def green_extent_beyond_point(
+    boundary: list[LatLng], tee: LatLng, green: LatLng, origin: LatLng
+) -> tuple[float, float]:
+    """How far the green boundary extends beyond `origin` (e.g. today's
+    pin) along the *lateral* axis of the tee->green aim line, in each
+    direction — returns `(extent_right_yards, extent_left_yards)`, both
+    `>= 0`. This is what Phase 14's short-siding rule (`app/services/
+    approach.py`) compares a miss's side against: how much green is
+    available between the pin and the boundary, on the side you missed vs.
+    the side you didn't.
+
+    Approximates true boundary-ray intersection by projecting every
+    boundary vertex onto the same lateral axis `offset_from_aim_line`
+    already uses and taking the extreme vertex on each side of `origin` —
+    exact for a green that's convex along that axis, an approximation
+    otherwise. The same order of simplification this module's flat-earth
+    projection already accepts for a feature at this scale.
+    """
+    origin_lateral = offset_from_aim_line(tee, green, origin).lateral_yards
+    lateral_values = [offset_from_aim_line(tee, green, v).lateral_yards for v in boundary]
+
+    extent_right = max(
+        (v - origin_lateral for v in lateral_values if v >= origin_lateral), default=0.0
+    )
+    extent_left = max(
+        (origin_lateral - v for v in lateral_values if v <= origin_lateral), default=0.0
+    )
+    return extent_right, extent_left
+
+
+def green_boundary_ring(green_boundary_geojson: str) -> list[LatLng]:
+    """Unwraps a `ST_AsGeoJSON(Hole.green_boundary)` string into its outer
+    ring as `LatLng`s. GeoJSON coordinates are `[lng, lat]`, the reverse of
+    this module's `LatLng(lat, lng)` — shared here so
+    `app/api/routes/rounds.py` and `app/api/routes/courses.py` don't each
+    carry their own copy of the swap.
+    """
+    ring = json.loads(green_boundary_geojson)["coordinates"][0]
+    return [LatLng(lat=lat, lng=lng) for lng, lat in ring]

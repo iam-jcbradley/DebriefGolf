@@ -64,6 +64,10 @@ def test_analytics_endpoint_returns_expected_shape(
     assert body["shots"][0]["category"] == "OTT"
     assert body["shots"][1]["category"] == "APP"
     assert body["shots"][2]["category"] == "PUTT"
+    # This fixture's course has no tee/green geometry and no recorded pin —
+    # the common case for most rounds, still true even post-Phase-14.
+    assert all(not s["has_pin"] for s in body["shots"])
+    assert all(not s["has_green_boundary"] for s in body["shots"])
 
 
 def test_analytics_endpoint_does_not_write(
