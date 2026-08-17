@@ -4,7 +4,22 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "@/lib/utils"
 
 const buttonVariants = cva(
-  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+  // Focus is a crisp outline (STYLE_GUIDE.md §4, Focus), not the shadcn
+  // default `ring` — a soft blurred halo is exactly the kind of glow the
+  // guide's "avoid shadows" rule already rejects for surfaces, and on the
+  // `destructive` variant the ring rendered as a pale pink halo unlike
+  // anything else in the palette.
+  // `outline-none` (unconditional) sets outline-style:none, and `outline-2`
+  // alone only sets width — without something to put outline-style back to
+  // solid, the outline stays invisible at every width. The bare `outline`
+  // utility would do that, but tailwind-merge treats `outline` and
+  // `outline-2` as the same conflict group and silently drops whichever
+  // comes first, no matter the order — `outline-solid` is a distinct group
+  // to twMerge, so it survives alongside `outline-2`. Confirmed by reading
+  // the actual computed style, not just the class list: the bare-`outline`
+  // version passed a visual check of the source but rendered outline-style
+  // "none" in the browser the whole time.
+  "group/button inline-flex shrink-0 items-center justify-center rounded-lg border border-transparent bg-clip-padding text-sm font-medium whitespace-nowrap transition-colors outline-none select-none focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring active:not-aria-[haspopup]:translate-y-px disabled:pointer-events-none disabled:opacity-50 aria-invalid:border-destructive aria-invalid:outline-solid aria-invalid:outline-destructive [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {
     variants: {
       variant: {
@@ -15,8 +30,12 @@ const buttonVariants = cva(
           "bg-secondary text-secondary-foreground hover:bg-[color-mix(in_oklch,var(--secondary),var(--foreground)_5%)] aria-expanded:bg-secondary aria-expanded:text-secondary-foreground",
         ghost:
           "text-foreground hover:bg-muted hover:text-foreground aria-expanded:bg-muted aria-expanded:text-foreground dark:hover:bg-muted/50",
+        // Hairline outline, not a filled tint — a 10% rust fill rendered as
+        // pale pink, the one control in the app that didn't read as ink,
+        // paper, or the fairway accent (STYLE_GUIDE.md §4, "structure from
+        // hairlines").
         destructive:
-          "bg-destructive/10 text-destructive hover:bg-destructive/20 focus-visible:border-destructive/40 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:hover:bg-destructive/30 dark:focus-visible:ring-destructive/40",
+          "border-destructive/40 bg-transparent text-destructive hover:bg-destructive/8 dark:hover:bg-destructive/15",
         link: "text-primary underline-offset-4 hover:underline",
       },
       label: {

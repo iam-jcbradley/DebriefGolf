@@ -59,6 +59,44 @@ reference PRD sections (`PRD §5.2`) rather than restating requirements. When yo
 finish a phase, update its entry with real numbers and a candid "gaps carried
 forward" list — that section is load-bearing, not decoration.
 
+## Review process
+
+**Run a five-perspective panel before finalizing a plan, and before calling
+significant work done.** Five independent agents — PM, developer, designer,
+customer/end-user, QA — reviewing the same target in parallel with no shared
+context, each told to critique from their lens only against the real project
+docs (the plan itself, `docs/PRD.md`, `docs/STYLE_GUIDE.md` for the design
+read, this file for the developer and QA reads), not from a summary of what
+to think. The QA read is the long-term-maintainability lens the other four
+don't cover: code quality, human legibility, simplicity, and adherence to
+this file's own conventions, on the actual diff or code under review rather
+than the plan prose — where a duplicated helper, a misleading name, a
+missing test for the new branch, or a needless abstraction would slow down
+whoever touches this next. Then synthesize: findings multiple reviewers hit
+independently are the ones that matter most, and the pass isn't done until
+they produce an actual revision — a panel that changes nothing wasn't worth
+running. Part III of `docs/DEVELOPMENT_PLAN.md` is the reference example
+(from the four-perspective version of this process, before the QA seat
+existed): it reordered its four phases, cut two speculative items to the
+backlog, and caught a factual error in a cost estimate, all from convergent
+findings a single pass had missed.
+
+Run it:
+- Before finalizing or substantially revising `docs/DEVELOPMENT_PLAN.md` —
+  a new phase, a re-sequencing, a scope change.
+- Before marking a phase (or other significant chunk of work) done — a last
+  pass before writing up acceptance criteria, not a replacement for it.
+
+Don't run it for routine fixes or small edits — it's the expensive path,
+reserved for decisions that are costly to get wrong and cheap to catch here.
+
+**The QA seat's findings get recorded in `docs/KNOWN_ISSUES.md`**, whether or
+not they get fixed in the same pass — a real bug or drift risk found and not
+written down gets rediscovered from scratch next time. It's also a fine
+standalone QA pass to run on its own, not just as part of the five-agent
+panel, when you want a general health check rather than a review of one
+specific plan or diff.
+
 ## Things that will bite you
 
 **Never return `select(Shot)` (or any model with a geometry column) as JSON.**
