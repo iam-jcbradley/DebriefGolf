@@ -10,6 +10,7 @@ const baseHole: HoleReplay = {
   yardage: 400,
   tee: { lat: 33.7, lng: -78.9 },
   green_center: { lat: 33.7025, lng: -78.9 }, // ~277y due north
+  pin: null,
   green_boundary: [
     { lat: 33.70255, lng: -78.90005 },
     { lat: 33.70255, lng: -78.89995 },
@@ -20,17 +21,20 @@ const baseHole: HoleReplay = {
     {
       shot_id: 1, shot_number: 1, club: "Driver", start_lie: "tee", end_lie: "fairway",
       start_distance_yards: 400, end_distance_yards: 150, strokes_gained: 0.4, tag: null,
-      approach_leave: "unclassified", location: { lat: 33.7013, lng: -78.9001 },
+      approach_leave: "unclassified", has_pin: false, has_green_boundary: true,
+      location: { lat: 33.7013, lng: -78.9001 },
     },
     {
       shot_id: 2, shot_number: 2, club: "7-Iron", start_lie: "fairway", end_lie: "sand",
       start_distance_yards: 150, end_distance_yards: 8, strokes_gained: -0.8, tag: "Heel",
-      approach_leave: "short_sided", location: { lat: 33.7022, lng: -78.9002 },
+      approach_leave: "short_sided", has_pin: false, has_green_boundary: true,
+      location: { lat: 33.7022, lng: -78.9002 },
     },
     {
       shot_id: 3, shot_number: 3, club: null, start_lie: "penalty", end_lie: "penalty",
       start_distance_yards: 140, end_distance_yards: 140, strokes_gained: -1.0, tag: "Penalty",
-      approach_leave: "unclassified", location: null, // no recorded position
+      approach_leave: "unclassified", has_pin: false, has_green_boundary: true,
+      location: null, // no recorded position
     },
   ],
   short_sided_count: 1,
@@ -82,6 +86,26 @@ describe("HoleReplaySvg", () => {
   it("omits the dispersion ellipse when none is passed", () => {
     const { container } = render(<HoleReplaySvg hole={baseHole} />);
     expect(container.querySelector('[data-testid="dispersion-ellipse"]')).toBeNull();
+  });
+
+  it("omits the pin marker and aims the line at the green center when no pin is recorded", () => {
+    const { container } = render(<HoleReplaySvg hole={baseHole} />);
+    expect(container.querySelector('[data-testid="pin-marker"]')).toBeNull();
+    const line = container.querySelector("line");
+    const greenCircle = container.querySelectorAll("circle")[1];
+    expect(line?.getAttribute("x2")).toEqual(greenCircle.getAttribute("cx"));
+    expect(line?.getAttribute("y2")).toEqual(greenCircle.getAttribute("cy"));
+  });
+
+  it("renders a pin marker and aims the line at the pin when one is recorded", () => {
+    const hole: HoleReplay = { ...baseHole, pin: { lat: 33.7026, lng: -78.9001 } };
+    const { container } = render(<HoleReplaySvg hole={hole} />);
+    expect(container.querySelector('[data-testid="pin-marker"]')).not.toBeNull();
+    const line = container.querySelector("line");
+    const greenCircle = container.querySelectorAll("circle")[1];
+    // the pin sits north of the green center in this fixture, so the aim
+    // line's endpoint should differ from the green marker's position.
+    expect(line?.getAttribute("y2")).not.toEqual(greenCircle.getAttribute("cy"));
   });
 
   it("anchors the ellipse away from the tee when ellipseAnchorYards is given", () => {

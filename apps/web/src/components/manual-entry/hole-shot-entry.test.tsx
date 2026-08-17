@@ -17,6 +17,7 @@ const hole: HoleReplay = {
   yardage: 400,
   tee: { lat: 33.7, lng: -78.9 },
   green_center: { lat: 33.7025, lng: -78.9 },
+  pin: null,
   green_boundary: null,
   shots: [],
   short_sided_count: 0,
@@ -99,6 +100,70 @@ describe("HoleShotEntry", () => {
 
     expect(screen.getByLabelText("Club")).toHaveValue("");
     expect(screen.getByLabelText("Start distance (yd)")).toHaveValue(null);
+  });
+
+  describe("pin mode", () => {
+    it("does not render the mode toggle when onSetPin is omitted", () => {
+      render(<HoleShotEntry hole={hole} draftShotsForHole={[]} onAdd={vi.fn()} />);
+      expect(screen.queryByRole("button", { name: "Set today's pin" })).not.toBeInTheDocument();
+    });
+
+    it("clicking the map in shot mode still sets the shot location, not the pin", () => {
+      const onSetPin = vi.fn();
+      render(
+        <HoleShotEntry hole={hole} draftShotsForHole={[]} onAdd={vi.fn()} onSetPin={onSetPin} />
+      );
+
+      fireEvent.click(screen.getByRole("img", { name: "Hole 1 replay" }), {
+        clientX: 160,
+        clientY: 240,
+      });
+
+      expect(screen.getByText(/location set/i)).toBeInTheDocument();
+      expect(onSetPin).not.toHaveBeenCalled();
+    });
+
+    it("switching to pin mode and clicking the map calls onSetPin instead of setting a shot location", async () => {
+      const onSetPin = vi.fn();
+      const user = userEvent.setup();
+      render(
+        <HoleShotEntry hole={hole} draftShotsForHole={[]} onAdd={vi.fn()} onSetPin={onSetPin} />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Set today's pin" }));
+      fireEvent.click(screen.getByRole("img", { name: "Hole 1 replay" }), {
+        clientX: 160,
+        clientY: 240,
+      });
+
+      expect(onSetPin).toHaveBeenCalledTimes(1);
+      expect(screen.queryByText(/location set/i)).not.toBeInTheDocument();
+    });
+
+    it("shows a no-pin-yet hint in pin mode until the hole has one recorded", async () => {
+      const user = userEvent.setup();
+      render(
+        <HoleShotEntry hole={hole} draftShotsForHole={[]} onAdd={vi.fn()} onSetPin={vi.fn()} />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Set today's pin" }));
+      expect(screen.getByText(/no pin recorded yet/i)).toBeInTheDocument();
+    });
+
+    it("shows a move-the-pin hint in pin mode once the hole already has one", async () => {
+      const user = userEvent.setup();
+      render(
+        <HoleShotEntry
+          hole={{ ...hole, pin: { lat: 33.7026, lng: -78.9001 } }}
+          draftShotsForHole={[]}
+          onAdd={vi.fn()}
+          onSetPin={vi.fn()}
+        />
+      );
+
+      await user.click(screen.getByRole("button", { name: "Set today's pin" }));
+      expect(screen.getByText(/move today's pin/i)).toBeInTheDocument();
+    });
   });
 
   it("renders already-added draft shots for this hole as map preview markers", () => {
