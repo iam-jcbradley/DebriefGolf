@@ -969,7 +969,7 @@ additions), `tsc --noEmit` clean, eslint clean.
   `osm_courses.py` already carry, stated in `email.py`'s own docstring
   rather than pretended away.
 
-## Phase 16 — Aggregate Query Push-Down & Export Bounding
+## Phase 16 — Aggregate Query Push-Down & Export Bounding (done)
 
 Goal: Phase 11 ended with two "not worth it until someone has that much
 data" notes. The review cut the third item this phase originally carried —
@@ -980,30 +980,104 @@ a wrong Strokes Gained number is a bad trade for shaving single-digit
 milliseconds off an endpoint that isn't slow. Revisit only if profiling ever
 shows otherwise — see the Backlog.
 
-- [ ] **Push aggregation into SQL** for `GET /bag` and both practice
+- [x] **Push aggregation into SQL** for `GET /bag` and both practice
   endpoints (Phase 11 gap: "now bound by Python-side aggregation over all of
-  a user's shots, ~200ms at 21,600"). The real obstacle is named in that same
-  note — Smart Bag's IQR outlier rejection is a two-pass operation that has
-  to move into SQL (`percentile_cont`, or a per-club summary table refreshed
-  on write) without changing which shots get rejected. Output must match the
-  current Python implementation within numeric tolerance on the seeded demo
-  round — not byte-identical, which `percentile_cont` vs. NumPy's
-  `percentile` can't guarantee given differing floating-point summation
-  order.
-- [ ] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
-  returns every row the user owns, by definition"). Streaming response or a
-  background job; the privacy commitment in `docs/DATA_PRIVACY.md` is that
-  the export exists and is complete, not that it's instant, so this is about
-  not holding an entire account in memory rather than about latency.
-- [ ] **Re-run `scripts/benchmark.py`** and record real before/after numbers
-  in this entry, the way Phase 11's table does. This repo's stated rule is
-  measure before changing; a performance phase that reports no numbers has
-  skipped its own acceptance criteria.
+  a user's shots, ~200ms at 21,600"). The real obstacle named in that same
+  note — Smart Bag's IQR outlier rejection is a two-pass operation — moved
+  into SQL as three CTEs in `club_carry_dispersion_sql`
+  (`app/api/routes/_shot_queries.py`): quartiles via `percentile_cont`,
+  Tukey fences from those quartiles (skipped, via a `NULL` bound, for clubs
+  under `MIN_SAMPLES_FOR_IQR`), then a `FILTER`-qualified aggregate for the
+  survivors. `percentile_cont`'s ordered-set interpolation turned out to
+  match NumPy's default `percentile` method exactly rather than merely
+  "within tolerance" — verified directly against a live Postgres instance
+  before writing any application code, both on a synthetic sample and on
+  every club in the seeded demo round (see the acceptance-criteria note
+  below). Lateral dispersion deliberately stayed in Python: it's already the
+  smaller query (only located shots), and pushing its flat-earth trig into
+  SQL would risk a third copy of `app/services/geometry.py`'s
+  `YARDS_PER_DEGREE_LAT` alongside the existing TypeScript mirror — not a
+  trade this phase's own named obstacle called for. `GET /bag` no longer
+  calls `fetch_on_course_shots` at all; `GET /practice/delivery` only calls
+  the new SQL function; `GET /practice/combines` still calls
+  `fetch_on_course_shots` for its Strokes-Gained bracket and putting
+  evaluation, unrelated to the IQR obstacle this phase targeted.
+- [x] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
+  returns every row the user owns, by definition"). Rewritten as a
+  `StreamingResponse` (`app/api/routes/privacy.py`) that fetches one round's
+  shots (or one practice session's shots) at a time and yields each round/
+  session object as soon as it's serialized, rather than grouping every shot
+  the user has ever recorded into one dict before any of it is sent. Peak
+  memory is now O(one round's shots) instead of O(every shot the user
+  owns). This trades one big query for one small query per round/session —
+  explicitly sanctioned by this item's own framing below — rather than a
+  true DB-level server-side cursor, which would have needed to interact with
+  Phase 9's savepoint-based transactional test isolation in ways this phase
+  didn't need to risk for a "not about latency" requirement.
+- [x] **Re-run `scripts/benchmark.py`** and record real before/after numbers
+  in this entry, the way Phase 11's table does.
 
-**Acceptance criteria:** the benchmark table above, filled in with real
-medians. Smart Bag output within numeric tolerance before and after the SQL
-push-down on the seeded demo round, including the deliberately-planted
-outlier shot that Phase 2's tests already rely on.
+| endpoint | before | after | |
+|---|---|---|---|
+| `GET /bag` | 244.0 | 43.2 | **5.6x** |
+| `GET /practice/delivery` | 241.0 | 43.7 | **5.5x** |
+| `GET /practice/combines` | 315.1 | 292.6 | still walks every shot for its SG bracket + putting — unrelated to this phase's IQR push-down |
+| `GET /me/export` | 462.0 | 708.0 | **slower, by design** — 300 small queries instead of 2 big ones; see gaps below |
+
+(Unlisted endpoints — `GET /rounds`, `GET /rounds?limit=1`,
+`GET /rounds/{id}/analytics`, `GET /rounds/{id}/holes` — are untouched by
+this phase and unchanged within noise of Phase 11's numbers.)
+
+**Acceptance criteria, verified:** `tests/test_shot_queries.py` compares
+`club_carry_dispersion_sql`'s output directly against
+`app/services/smart_bag.py`'s `compute_dispersion` on identical samples,
+including the six-sample `[248, 250, 252, 251, 249, 400]` set
+`tests/test_bag_route.py`'s planted-outlier test already relies on — count,
+excluded-outlier count, mean, median and stdev all match (stdev to
+`1e-9`), not merely "within tolerance". A below-`MIN_SAMPLES_FOR_IQR` case,
+independent multi-club aggregation, cross-user scoping, and the
+putter/non-positive-carry exclusions `shot_carry_distance`'s callers relied
+on all get their own test. `tests/test_privacy_routes.py` gained two tests
+seeding two rounds (and two practice sessions) with different clubs each,
+to catch a round/session mix-up in the new per-entity streaming query — a
+real risk this refactor introduced that the single-query original couldn't
+have had. 398 backend tests (up from 389: 7 in the new
+`test_shot_queries.py`, 2 in `test_privacy_routes.py`), ruff clean. Verified
+live against the running dev stack (not just `scripts/benchmark.py`'s bench
+database): `GET /bag`, `GET /practice/delivery`, `GET /practice/combines`,
+and `GET /me/export` all called against the seeded demo account and
+inspected by hand, plus a Chromium pass over `/rounds/{id}` (which calls
+`getSmartBag()` for its dispersion ellipse) and `/practice` confirming
+no visual or console regression. No frontend files changed this phase — the
+response shapes are identical, only how they're computed and delivered.
+
+**Gaps carried forward:**
+- **`GET /me/export` got slower, not just unbounded-in-memory-but-otherwise-
+  fine.** 300 rounds' worth of one-query-per-round adds real round-trip
+  overhead the original's two big queries didn't pay — 708ms vs. 462ms at
+  this benchmark's volume, all against a local Postgres with no network
+  latency to speak of. A real deployment with non-trivial DB round-trip time
+  would feel this more, not less. This item's own acceptance framing ("not
+  holding an entire account in memory rather than about latency") sanctions
+  the trade, but a future pass could close both gaps at once with a single
+  ordered shots query merge-joined against the rounds iterator instead of
+  one query per round — deferred here because it requires both streams
+  consistently ordered (round id rather than the current `played_at`), which
+  touches more than this phase's stated scope.
+- **`GET /practice/combines` only picked up a small win** (315.1ms →
+  292.6ms) because its dominant cost — `fetch_on_course_shots` for the
+  Strokes-Gained bracket and `evaluate_putting` — was never the IQR
+  aggregation this phase's own text named as "the real obstacle." Pushing
+  those into SQL too is a real follow-up but a different one: SG-bracket
+  filtering and putting classification aren't outlier-rejection problems,
+  so `percentile_cont` doesn't apply, and each would need its own
+  correctness argument the way `club_carry_dispersion_sql` got here.
+- **The streaming export still does N+1 queries against practice sessions**
+  the same way it does against rounds — not separately benchmarked above
+  since the seeded demo account and this benchmark's synthetic data both
+  have only one practice session, so its contribution to the 708ms figure
+  is real but small next to the 300-round cost. Would be fixed by the same
+  merge-join redesign as the rounds gap above.
 
 ## Phase 17 — Type-Safety Follow-Through
 

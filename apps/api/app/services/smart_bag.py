@@ -97,6 +97,30 @@ def compute_club_gapping(
     ]
 
 
+def build_club_gapping(
+    carry_by_club: dict[str, DispersionStats],
+    lateral_by_club: dict[str, list[float]] | None = None,
+    k: float = DEFAULT_IQR_MULTIPLIER,
+) -> list[ClubGappingStats]:
+    """Same shape as `compute_club_gapping`, but for carry dispersion
+    that's already been computed (e.g. by a SQL push-down — see
+    `app/api/routes/_shot_queries.py`'s `club_carry_dispersion_sql`) rather
+    than raw carry samples. Lateral dispersion still goes through
+    `compute_dispersion` here: it isn't pushed into SQL (see that module's
+    docstring for why), so it still arrives as raw samples."""
+    lateral_by_club = lateral_by_club or {}
+    return [
+        ClubGappingStats(
+            club=club,
+            carry=carry,
+            lateral=(
+                compute_dispersion(lateral_by_club[club], k=k) if club in lateral_by_club else None
+            ),
+        )
+        for club, carry in carry_by_club.items()
+    ]
+
+
 def sort_by_club_order(stats: list[ClubGappingStats]) -> list[ClubGappingStats]:
     """Clubs not in `CLUB_ORDER` (custom/unrecognized names) sort last, in
     their original relative order."""
