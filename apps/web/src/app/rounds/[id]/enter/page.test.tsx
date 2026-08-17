@@ -83,7 +83,8 @@ describe("EnterRoundPage", () => {
 
     render(<EnterRoundPage />);
 
-    expect(screen.getByText("Enter round #42")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Enter shots" })).toBeInTheDocument();
+    expect(screen.getByText("Round 42")).toBeInTheDocument();
     expect(await screen.findByRole("button", { name: "2" })).toBeInTheDocument();
   });
 

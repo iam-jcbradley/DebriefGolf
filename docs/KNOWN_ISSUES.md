@@ -14,17 +14,31 @@ deleted, so the history of what broke and why is still here later.
 
 ## Open
 
-- **Stale service-layer README.** `apps/api/app/services/README.md` — the
+None currently — the four entries below were the only ones found by the
+2026-08-16 QA gut-check, and all four are now fixed.
+
+## Fixed
+
+- ~~**Stale service-layer README.** `apps/api/app/services/README.md` — the
   file `CLAUDE.md` explicitly points readers to first ("See
   `app/services/README.md` for what each module does and which phase built
   it") — hasn't been updated since Phase 5. It documents a
   `GET /api/bag/{user_id}` route shape Phase 10 deleted (identity comes from
   `CurrentUser`, no endpoint takes a `user_id`), and its last line still
   claims combine matching and the coach lesson brief export are "not yet
-  implemented," though both shipped and were touched again through Phase 14.
-  *Found by: QA panel gut-check, 2026-08-16.*
+  implemented," though both shipped and were touched again through Phase 14.~~
+  **Fixed.** Rewrote the README's route references to match `CurrentUser`
+  (no more `{user_id}`, found in four places across the bag and practice
+  route sections, not just the one the original report called out) and
+  added the missing Phase 6/11/14 sections
+  (`delivery_profile.py`, `practice_combines.py`, `shot_view.py`, the Phase
+  14 `approach.py`/`geometry.py` changes), replacing the stale "not yet
+  implemented" line with a pointer at `DEVELOPMENT_PLAN.md`'s own gap
+  tracking instead of duplicating it here. Docs-only; no regression test —
+  verified by reading it against the current route/service tree. *Found by:
+  QA panel gut-check, 2026-08-16. Fixed: 2026-08-16.*
 
-- **Mapbox hole-replay markers hardcode hex colors that violate the style
+- ~~**Mapbox hole-replay markers hardcode hex colors that violate the style
   guide.** `apps/web/src/components/hole-replay/hole-replay-map.tsx:75-121`
   uses raw hex (`#0ca30c`, `#2a78d6`, `#d03b3b`, `#c9a227`, `#0b0b0b`)
   instead of the `--primary`/`--status-*` CSS custom properties
@@ -33,24 +47,48 @@ deleted, so the history of what broke and why is still here later.
   `var(--primary)` etc. Likely drifted because no environment this project
   has run in has ever had a real `NEXT_PUBLIC_MAPBOX_TOKEN` to visually
   check it against — see the standing Mapbox verification limit in
-  `CLAUDE.md`. *Found by: QA panel gut-check, 2026-08-16.*
+  `CLAUDE.md`.~~ **Fixed.** mapbox-gl's `Marker`/paint APIs need a literal
+  color, not a live `var(...)` reference, so a straight copy of the SVG's
+  `var(--primary)` strings wasn't an option — added `resolveThemeColor()`,
+  which reads the custom property's *computed* value off
+  `document.documentElement` at marker-creation time, and pointed every
+  marker/line at the same tokens `hole-replay-svg.tsx` uses (tee →
+  `--foreground`, green → `--status-good`, pin/shot-path/non-short-sided
+  shots → `--primary`, short-sided shots → `--status-critical`) so both
+  views agree and both track the active light/dark theme. Regression test:
+  `hole-replay-map.test.tsx` now sets the CSS custom properties on
+  `document.documentElement` in `beforeEach` and asserts markers are created
+  with the resolved values, not a hardcoded hex — it would fail if a color
+  reverted to a literal. *Found by: QA panel gut-check, 2026-08-16. Fixed:
+  2026-08-16.*
 
-- **Near-duplicate ~100-line bulk-upsert blocks in `rounds.py`.**
+- ~~**Near-duplicate ~100-line bulk-upsert blocks in `rounds.py`.**
   `create_shots_bulk` and `create_pins_bulk` each independently implement
   the same shape: ownership check → 409 on no course → hole-number
   resolution → 422 on unknown hole → upsert-by-natural-key loop → commit →
   serialize. A fix to one (an ownership edge case, an extra validation) has
-  nothing forcing it onto the other. *Found by: QA panel gut-check,
+  nothing forcing it onto the other.~~ **Fixed.** Extracted the identical
+  preamble — ownership check, course-assigned check, hole-number-to-id
+  resolution, unknown-hole 422 — into `_resolve_round_holes()`, which both
+  endpoints now call instead of maintaining their own copy. The upsert loops
+  themselves stay separate: `Shot`'s natural key is `(hole_id,
+  shot_number)` and `RoundHolePin`'s is `hole_id` alone, and the two entities
+  serialize to different shapes, so unifying that part would trade a real
+  duplication for a forced abstraction. No behavior change — the existing
+  `test_rounds.py` bulk-shots/bulk-pins tests (ownership 404s, no-course
+  409s, unknown-hole 422s, idempotent resubmits) all pass unmodified against
+  the refactored code. *Found by: QA panel gut-check, 2026-08-16. Fixed:
   2026-08-16.*
 
-- **GeoJSON green-boundary ring parsing duplicated verbatim** in
+- ~~**GeoJSON green-boundary ring parsing duplicated verbatim** in
   `rounds.py::_hole_geometry_contexts` and `courses.py::_serialize_course` —
   the same `json.loads(...)["coordinates"][0]` plus `lng, lat` → `LatLng`
   swap in two files. Small, but `geometry.py` already exists as the one
-  place this kind of PostGIS/GeoJSON unwrapping should live. *Found by: QA
-  panel gut-check, 2026-08-16.*
-
-## Fixed
+  place this kind of PostGIS/GeoJSON unwrapping should live.~~ **Fixed.**
+  Added `geometry.py::green_boundary_ring()` and pointed both call sites at
+  it. No behavior change — `test_hole_replay_routes.py` and
+  `test_courses_routes.py`'s existing green-boundary assertions pass
+  unmodified. *Found by: QA panel gut-check, 2026-08-16. Fixed: 2026-08-16.*
 
 - ~~**`GET /practice/combines` can never recommend the Driver Dispersion
   combine.** `apps/api/app/api/routes/practice.py`'s `_on_course_club_gapping`

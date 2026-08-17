@@ -2,6 +2,10 @@
 
 import { useState, type FormEvent } from "react";
 import { HoleReplayMap } from "@/components/hole-replay/hole-replay-map";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Overline } from "@/components/ui/overline";
+import { Select } from "@/components/ui/select";
 import type { HoleReplay, HoleReplayShot, LatLngPoint } from "@/lib/api";
 import { LIES, type DraftShot, type Lie } from "@/lib/audit/types";
 import { cn } from "@/lib/utils";
@@ -94,135 +98,131 @@ export function HoleShotEntry({ hole, draftShotsForHole, onAdd, onSetPin }: Hole
   }
 
   return (
-    <div className="space-y-3">
-      {onSetPin && (
-        <div className="flex gap-1 text-sm">
-          <button
-            type="button"
-            onClick={() => setMode("shot")}
-            aria-current={mode === "shot"}
-            className={cn(
-              "rounded-md border px-2.5 py-1",
-              mode === "shot" ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"
-            )}
-          >
-            Add shot location
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("pin")}
-            aria-current={mode === "pin"}
-            className={cn(
-              "rounded-md border px-2.5 py-1",
-              mode === "pin" ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"
-            )}
-          >
-            Set today&apos;s pin
-          </button>
-        </div>
-      )}
+    // Map left, form right, at lg — this is the app's primary ingestion
+    // path (manual entry, repeated ~80x/round per CLAUDE.md), and stacking
+    // a 480px map above the form pushed every field below the fold on a
+    // typical viewport. The map stays `sticky` in the left column so it's
+    // still visible while filling in the form beside it, the same reason
+    // the hole-replay canvas and its shot list sit side by side.
+    <div className="lg:grid lg:grid-cols-[1fr_360px] lg:items-start lg:gap-6">
+      <div className="space-y-3 lg:sticky lg:top-6">
+        {onSetPin && (
+          <div className="flex gap-1 text-sm">
+            <button
+              type="button"
+              onClick={() => setMode("shot")}
+              aria-current={mode === "shot"}
+              className={cn(
+                "rounded-md border px-2.5 py-1",
+                mode === "shot" ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"
+              )}
+            >
+              Add shot location
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("pin")}
+              aria-current={mode === "pin"}
+              className={cn(
+                "rounded-md border px-2.5 py-1",
+                mode === "pin" ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted"
+              )}
+            >
+              Set today&apos;s pin
+            </button>
+          </div>
+        )}
 
-      <HoleReplayMap hole={{ ...hole, shots: previewShots }} onPick={handlePick} />
+        <HoleReplayMap hole={{ ...hole, shots: previewShots }} onPick={handlePick} />
 
-      {mode === "pin" ? (
-        <p className="text-xs text-muted-foreground">
-          {hole.pin
-            ? "Click the map to move today's pin. Short-siding uses this position."
-            : "Click the map to record where the pin is today — this hole has no pin recorded yet."}
-        </p>
-      ) : location ? (
-        <p className="text-xs text-muted-foreground">
-          Location set ({location.lat.toFixed(5)}, {location.lng.toFixed(5)}) —{" "}
-          <button type="button" onClick={() => setLocation(null)} className="underline">
-            clear
-          </button>
-        </p>
-      ) : (
-        <p className="text-xs text-muted-foreground">
-          Click the map to set this shot&apos;s GPS location (optional).
-        </p>
-      )}
+        {mode === "pin" ? (
+          <p className="text-xs text-muted-foreground">
+            {hole.pin
+              ? "Click the map to move today's pin. Short-siding uses this position."
+              : "Click the map to record where the pin is today — this hole has no pin recorded yet."}
+          </p>
+        ) : location ? (
+          <p className="text-xs text-muted-foreground">
+            Location set ({location.lat.toFixed(5)}, {location.lng.toFixed(5)}) —{" "}
+            <button type="button" onClick={() => setLocation(null)} className="underline">
+              clear
+            </button>
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Click the map to set this shot&apos;s GPS location (optional).
+          </p>
+        )}
+      </div>
 
-      <form onSubmit={handleSubmit} className="rounded-lg border p-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <label className="text-sm">
-            Club
-            <input
+      <form
+        onSubmit={handleSubmit}
+        className="mt-3 rounded-md border border-border bg-card p-4 lg:mt-0"
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Club</Overline>
+            <Input
               type="text"
               value={club}
               onChange={(e) => setClub(e.target.value)}
               placeholder="7-Iron / Putter"
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
-          <label className="text-sm">
-            Start lie
-            <select
-              value={startLie}
-              onChange={(e) => setStartLie(e.target.value as Lie)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
-            >
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Tag (optional)</Overline>
+            <Input
+              type="text"
+              value={tag}
+              onChange={(e) => setTag(e.target.value)}
+              placeholder="OB Right"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Start lie</Overline>
+            <Select value={startLie} onChange={(e) => setStartLie(e.target.value as Lie)}>
               {REVIEWABLE_LIES.map((lie) => (
                 <option key={lie} value={lie}>
                   {lie}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
-          <label className="text-sm">
-            End lie
-            <select
-              value={endLie}
-              onChange={(e) => setEndLie(e.target.value as Lie)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
-            >
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">End lie</Overline>
+            <Select value={endLie} onChange={(e) => setEndLie(e.target.value as Lie)}>
               {LIES.map((lie) => (
                 <option key={lie} value={lie}>
                   {lie}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
-          <label className="text-sm">
-            Start distance (yd)
-            <input
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">Start distance (yd)</Overline>
+            <Input
               type="number"
               min={0}
               step="any"
               value={startDistance}
               onChange={(e) => setStartDistance(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
-          <label className="text-sm">
-            End distance (yd)
-            <input
+          <label className="flex flex-col gap-1 text-sm">
+            <Overline as="span">End distance (yd)</Overline>
+            <Input
               type="number"
               min={0}
               step="any"
               value={endDistance}
               onChange={(e) => setEndDistance(e.target.value)}
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
-            />
-          </label>
-          <label className="text-sm">
-            Tag (optional)
-            <input
-              type="text"
-              value={tag}
-              onChange={(e) => setTag(e.target.value)}
-              placeholder="OB Right"
-              className="mt-1 w-full rounded-md border bg-background px-2 py-1"
             />
           </label>
         </div>
 
-        <button
-          type="submit"
-          className="mt-3 rounded-md border bg-primary px-4 py-2 text-sm text-primary-foreground hover:opacity-90"
-        >
+        <Button type="submit" className="mt-4">
           Add shot
-        </button>
+        </Button>
       </form>
     </div>
   );

@@ -171,7 +171,7 @@ function PrivacyNotice() {
         </p>
         <p>
           <strong className="text-foreground">Retention:</strong> round, shot, and practice data
-          is kept until you delete your account below. Garmin OAuth tokens are replaced on
+          is kept until you delete your account above. Garmin OAuth tokens are replaced on
           reconnection and removed immediately on disconnect.
         </p>
         <p>
@@ -181,7 +181,7 @@ function PrivacyNotice() {
         </p>
         <p>
           <strong className="text-foreground">Your rights:</strong> download a copy of your data
-          at any time, or permanently delete your account, both below.
+          at any time, or permanently delete your account, both above.
         </p>
       </CardContent>
     </Card>
@@ -200,7 +200,7 @@ export default function PrivacySettingsPage() {
   return (
     <div className="min-h-screen">
       <NavBar />
-      <main className="mx-auto max-w-2xl px-6 py-10">
+      <main className="mx-auto max-w-3xl px-6 py-10">
         <Overline accent>Settings</Overline>
         <h1 className="mt-1 font-serif text-3xl font-medium tracking-tight md:text-4xl">
           Privacy &amp; Data

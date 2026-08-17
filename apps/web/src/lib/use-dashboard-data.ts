@@ -1,21 +1,39 @@
 "use client";
 
 import useSWR from "swr";
-import { getRoundAnalytics, getRounds, type RoundAnalyticsResponse, type RoundSummary } from "@/lib/api";
+import {
+  getRoundAnalytics,
+  getRoundHoles,
+  getRounds,
+  type RoundAnalyticsResponse,
+  type RoundSummary,
+} from "@/lib/api";
 
 export type DashboardState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "empty" }
   | { status: "error"; message: string }
-  | { status: "ready"; round: RoundSummary; analytics: RoundAnalyticsResponse };
+  | {
+      status: "ready";
+      round: RoundSummary;
+      analytics: RoundAnalyticsResponse;
+      /** Sum of par for the holes this round was played over, so the
+       * snapshot can show score-to-par (PRD §8's "78 (+6)"). `null` when
+       * the round has no course attached and there are no holes to sum. */
+      coursePar: number | null;
+    };
 
 export interface UseDashboardData {
   state: DashboardState;
   refresh: () => void;
 }
 
-type DashboardFetch = { round: RoundSummary; analytics: RoundAnalyticsResponse } | null;
+type DashboardFetch = {
+  round: RoundSummary;
+  analytics: RoundAnalyticsResponse;
+  coursePar: number | null;
+} | null;
 
 async function fetchDashboardRound(): Promise<DashboardFetch> {
   // Ask for one round rather than fetching every round the player has
@@ -24,8 +42,17 @@ async function fetchDashboardRound(): Promise<DashboardFetch> {
   const rounds = await getRounds({ limit: 1 });
   if (rounds.length === 0) return null;
   const round = rounds[0];
-  const analytics = await getRoundAnalytics(round.id);
-  return { round, analytics };
+
+  // Holes come along for their `par` only. A round with no course 409s or
+  // returns nothing here, which is not a dashboard error — the snapshot
+  // just renders without a to-par figure.
+  const [analytics, holes] = await Promise.all([
+    getRoundAnalytics(round.id),
+    getRoundHoles(round.id).catch(() => []),
+  ]);
+  const coursePar = holes.length > 0 ? holes.reduce((sum, h) => sum + h.par, 0) : null;
+
+  return { round, analytics, coursePar };
 }
 
 /** `userId`: scopes the SWR cache key so switching who's signed in (no
@@ -52,7 +79,12 @@ export function useDashboardData(userId: number | null): UseDashboardData {
   } else if (data === null || data === undefined) {
     state = { status: "empty" };
   } else {
-    state = { status: "ready", round: data.round, analytics: data.analytics };
+    state = {
+      status: "ready",
+      round: data.round,
+      analytics: data.analytics,
+      coursePar: data.coursePar,
+    };
   }
 
   return { state, refresh: () => void mutate() };
