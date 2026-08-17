@@ -14,8 +14,23 @@ deleted, so the history of what broke and why is still here later.
 
 ## Open
 
-None currently — the four entries below were the only ones found by the
-2026-08-16 QA gut-check, and all four are now fixed.
+- **`src/app/rounds/[id]/enter/page.test.tsx`'s "submits the round and
+  redirects to the round detail page" test is flaky under the full
+  suite.** It fails intermittently with `expected "vi.fn()" to be called
+  with arguments: [ '/rounds/42' ] — Number of calls: 0` — the mocked
+  `router.push` never fires, meaning the submit handler didn't complete in
+  time. Run in isolation (`pnpm vitest run
+  src/app/rounds/[id]/enter/page.test.tsx`) it passes reliably, every time
+  (3/3 in a row); it only misfires as part of the full `pnpm test` run, in
+  the same position each time it happens (after ~60 other test files),
+  which points at cross-file state bleeding into this test — an un-awaited
+  promise, a shared mock, or fake-timer state left over from an earlier
+  file — rather than a bug in the page itself. Not yet root-caused. Surfaced
+  repeatedly (and reproducibly) while rebasing Dependabot PRs #7, #10, and
+  #20 across several fresh CI runs on unrelated diffs (a `requests` version
+  bump, a `garminconnect` version bump, a `react`/`react-dom` bump) — same
+  failure, same test, each time only inside the full-suite run. *Found by:
+  Dependabot PR review, 2026-08-17.*
 
 ## Fixed
 
