@@ -329,7 +329,7 @@ def create_shots_bulk(
 
     result_pairs: list[tuple[Shot, ShotCreateIn]] = []
     for s in payload.shots:
-        key = (hole_id_by_number[s.hole_number], s.shot_number)
+        key = (persisted(hole_id_by_number[s.hole_number]), s.shot_number)
         existing = existing_by_key.get(key)
         if existing is not None:
             result_pairs.append((existing, s))
@@ -426,7 +426,7 @@ def create_pins_bulk(
 
     result_pairs: list[tuple[RoundHolePin, PinCreateIn]] = []
     for p in payload.pins:
-        hole_id = hole_id_by_number[p.hole_number]
+        hole_id = persisted(hole_id_by_number[p.hole_number])
         point = WKTElement(f"POINT({p.location.lng} {p.location.lat})", srid=4326)
         existing = existing_by_hole_id.get(hole_id)
         if existing is not None:
