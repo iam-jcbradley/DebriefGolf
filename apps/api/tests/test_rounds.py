@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from geoalchemy2.elements import WKTElement
 from sqlmodel import Session, select
 
-from app.models import Course, Hole, Lie, Round, RoundStatus, Shot, User
+from app.models import Course, Hole, Lie, Round, RoundHolePin, RoundStatus, Shot, User
 
 
 def _seed_course(session: Session) -> int:
@@ -339,6 +339,79 @@ class TestCreateShotsBulk:
                     }
                 ]
             },
+        )
+
+        assert response.status_code == 422
+
+
+class TestCreatePinsBulk:
+    def test_creates_a_pin_resolving_hole_number_to_hole_id(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+
+        response = auth_client.post(
+            f"/api/rounds/{round_id}/pins/bulk",
+            json={"pins": [{"hole_number": 1, "location": {"lat": 33.701, "lng": -78.900}}]},
+        )
+
+        assert response.status_code == 201
+        body = response.json()
+        assert len(body) == 1
+        assert body[0]["hole_number"] == 1
+        assert body[0]["location"] == {"lat": 33.701, "lng": -78.900}
+
+        db_session.expire_all()
+        pins = db_session.exec(select(RoundHolePin).where(RoundHolePin.round_id == round_id)).all()
+        assert len(pins) == 1
+
+    def test_resubmitting_a_hole_replaces_its_pin_rather_than_duplicating(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+
+        first = auth_client.post(
+            f"/api/rounds/{round_id}/pins/bulk",
+            json={"pins": [{"hole_number": 1, "location": {"lat": 33.701, "lng": -78.900}}]},
+        )
+        second = auth_client.post(
+            f"/api/rounds/{round_id}/pins/bulk",
+            # A correction, not a duplicate — same hole, different point.
+            json={"pins": [{"hole_number": 1, "location": {"lat": 33.702, "lng": -78.901}}]},
+        )
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert first.json()[0]["id"] == second.json()[0]["id"]
+
+        db_session.expire_all()
+        pins = db_session.exec(select(RoundHolePin).where(RoundHolePin.round_id == round_id)).all()
+        assert len(pins) == 1
+        assert second.json()[0]["location"] == {"lat": 33.702, "lng": -78.901}
+
+    def test_404_for_unknown_round(self, auth_client: TestClient) -> None:
+        response = auth_client.post("/api/rounds/999999/pins/bulk", json={"pins": []})
+        assert response.status_code == 404
+
+    def test_409_when_round_has_no_course(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        round_ = Round(user_id=user.id, status=RoundStatus.needs_audit)
+        db_session.add(round_)
+        db_session.commit()
+        db_session.refresh(round_)
+
+        response = auth_client.post(f"/api/rounds/{round_.id}/pins/bulk", json={"pins": []})
+        assert response.status_code == 409
+
+    def test_422_for_unknown_hole_number(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        round_id, _ = _seed_round_with_two_holes(db_session, user)
+
+        response = auth_client.post(
+            f"/api/rounds/{round_id}/pins/bulk",
+            json={"pins": [{"hole_number": 99, "location": {"lat": 33.701, "lng": -78.900}}]},
         )
 
         assert response.status_code == 422
