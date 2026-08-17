@@ -22,7 +22,6 @@ beforeEach(() => {
   vi.mocked(mapboxgl.Marker).mockClear();
 });
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function triggerLoad(mapInstance: any) {
   const loadHandler = mapInstance.on.mock.calls.find(([event]: [string]) => event === "load")?.[1];
   act(() => {

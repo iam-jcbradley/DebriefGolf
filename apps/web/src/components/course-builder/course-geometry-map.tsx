@@ -44,7 +44,9 @@ export function CourseGeometryMap({
   // the latest `onPick` without re-creating the map every time the parent
   // re-renders with a new function identity.
   const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
+  useEffect(() => {
+    onPickRef.current = onPick;
+  });
 
   const [mapError, setMapError] = useState<string | null>(null);
   const [mapReady, setMapReady] = useState(false);

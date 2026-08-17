@@ -62,7 +62,9 @@ export function HoleReplayMap({
   // effect's deps — a new function identity on every parent render
   // shouldn't tear down and rebuild the live map.
   const onPickRef = useRef(onPick);
-  onPickRef.current = onPick;
+  useEffect(() => {
+    onPickRef.current = onPick;
+  });
 
   useEffect(() => {
     if (!token || !hole.tee || !containerRef.current) return;
