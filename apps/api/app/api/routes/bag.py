@@ -1,7 +1,8 @@
 from fastapi import APIRouter
 
 from app.api.deps import CurrentUser, SessionDep
-from app.api.routes._shot_queries import club_gapping_with_lateral, fetch_on_course_shots
+from app.api.routes._shot_queries import club_gapping_with_lateral
+from app.core.orm_typing import persisted
 from app.services.dispersion import compute_dispersion_ellipse
 from app.services.smart_bag import compute_gaps
 
@@ -17,12 +18,10 @@ def get_smart_bag(user: CurrentUser, session: SessionDep) -> dict:
     location-tagged shot (PRD §10 Phase 4 — see app/services/geometry.py for
     where the lateral offset comes from).
     """
-    # Raw columns rather than `select(Shot)`: this reads every shot the
-    # player has ever recorded, and building that many ORM instances costs
-    # ~5x what the five columns actually used cost. See
-    # app/services/shot_view.py.
-    shots = fetch_on_course_shots(session, user.id)
-    stats = club_gapping_with_lateral(session, user.id, shots)
+    # Carry dispersion is computed in SQL (Phase 16 — see
+    # _shot_queries.py's club_carry_dispersion_sql), so this no longer
+    # walks every shot the player has ever recorded into Python.
+    stats = club_gapping_with_lateral(session, persisted(user.id))
     gaps = compute_gaps(stats)
 
     clubs = []

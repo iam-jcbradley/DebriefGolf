@@ -48,24 +48,22 @@ venv = ".venv"
 typeCheckingMode = "basic"
 pythonVersion = "3.12"
 
-# SQLModel table classes and GeoAlchemy2 Geometry columns don't type-check
-# cleanly under these five rules in `basic` mode — not bugs, just stub gaps
-# in how SQLModel represents InstrumentedAttributes (e.g. `Model.col.in_()`
-# reads as a method on the column's plain Python type, not on the column
-# expression) and nullable primary keys (`id: int | None` pre-insert, but
-# always `int` once a row is actually fetched, which is every row every
-# route handler touches). Verified narrowly: with these at their normal
-# `error` severity, 101 of 103 pre-existing diagnostics are exactly this
-# shape, concentrated entirely in app/api/routes/, app/models/, and
-# app/db/seed.py — the SQLModel-facing layers — while app/services/ (PRD's
-# "touches no database session" layer) is clean. The two that were real
-# (app/services/tiger_five.py) got fixed, not silenced. Demoting these
-# still surfaces them as warnings in CI output; it just doesn't fail the
-# build on a class of finding that would otherwise require rewriting how
-# every table model annotates its geometry/PK columns to resolve, which is
-# a bigger and separately-justified change than "add a CI type check."
-reportArgumentType = "warning"
-reportCallIssue = "warning"
-reportAttributeAccessIssue = "warning"
-reportOptionalMemberAccess = "warning"
-reportAssignmentType = "warning"
+# Phase 12 demoted these five rules to `warning` rather than fixing their
+# ~101 SQLModel-stub-gap diagnostics on day one — narrowing the nullable-PK
+# pattern and correcting geometry-column annotations were bigger, separately
+# -justified changes than "add a CI type check." Phase 17 did that work and
+# these are back at their normal `error` severity: 0 diagnostics under all
+# five as of that phase, verified with `uv run pyright`. What's left when a
+# genuine SQLModel/SQLAlchemy stub gap can't be resolved by a real type fix
+# is a scoped `# type: ignore[the specific rule]` naming the gap inline,
+# not a blanket suppression — see `app/core/orm_typing.py`'s `persisted()`
+# (narrows a nullable PK at a call site where the row is known persisted)
+# and `col()` (casts a SQLModel class attribute to `Any` at query-
+# construction call sites — `.order_by()`, `.join()`, `.is_not()`, etc. —
+# where pyright statically sees the column's plain Python type rather than
+# the SQLAlchemy column-expression it actually is at the class level).
+reportArgumentType = "error"
+reportCallIssue = "error"
+reportAttributeAccessIssue = "error"
+reportOptionalMemberAccess = "error"
+reportAssignmentType = "error"

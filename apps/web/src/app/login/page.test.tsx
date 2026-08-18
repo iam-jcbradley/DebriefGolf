@@ -6,10 +6,12 @@ import LoginPage from "@/app/login/page";
 import { ApiError } from "@/lib/api";
 import { useCurrentUser } from "@/lib/current-user";
 
+let mockSearchParams = new URLSearchParams();
+
 vi.mock("next/navigation", () => ({
   usePathname: () => "/login",
   useRouter: vi.fn(),
-  useSearchParams: () => new URLSearchParams(),
+  useSearchParams: () => mockSearchParams,
   useParams: () => ({}),
 }));
 
@@ -25,6 +27,7 @@ const mockSignIn = vi.fn();
 const mockSignUp = vi.fn();
 
 beforeEach(() => {
+  mockSearchParams = new URLSearchParams();
   mockPush.mockReset();
   mockSignIn.mockReset().mockResolvedValue(undefined);
   mockSignUp.mockReset().mockResolvedValue(undefined);
@@ -121,5 +124,34 @@ describe("LoginPage", () => {
 
     expect(screen.getByText(/already signed in/i)).toBeInTheDocument();
     expect(screen.queryByLabelText("Password")).not.toBeInTheDocument();
+  });
+
+  it("links to the forgot-password page from sign-in mode", () => {
+    render(<LoginPage />);
+    expect(screen.getByRole("link", { name: "Forgot your password?" })).toHaveAttribute(
+      "href",
+      "/forgot-password"
+    );
+  });
+
+  it("does not offer forgot-password while creating an account", async () => {
+    const user = userEvent.setup();
+    render(<LoginPage />);
+
+    await user.click(screen.getByRole("button", { name: "Create one" }));
+
+    expect(screen.queryByRole("link", { name: "Forgot your password?" })).not.toBeInTheDocument();
+  });
+
+  it("shows a dry notice after the unauthorized interceptor redirects here", () => {
+    mockSearchParams = new URLSearchParams("expired=1");
+    render(<LoginPage />);
+
+    expect(screen.getByText("Signed out — sign in again.")).toBeInTheDocument();
+  });
+
+  it("shows no notice on an ordinary visit to /login", () => {
+    render(<LoginPage />);
+    expect(screen.queryByText("Signed out — sign in again.")).not.toBeInTheDocument();
   });
 });

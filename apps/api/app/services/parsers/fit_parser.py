@@ -17,13 +17,24 @@ back flagged `casual_practice` so it doesn't pollute Smart Bag baselines.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import BinaryIO
+from typing import Any, BinaryIO, Protocol, cast
 
 from fitparse import FitFile, FitParseError
 
 from app.models import RoundStatus
+
+
+class _FitMessage(Protocol):
+    """`fitparse` ships no type stubs (no `py.typed`, no `.pyi` files), so
+    `FitFile.get_messages()` comes back untyped — pyright falls back to
+    `dict[str, Unknown] | DefinitionMessage`, neither of which it knows has
+    `get_value`, even though every real message `fitparse` yields does at
+    runtime. This is the actual, minimal interface this module uses."""
+
+    def get_value(self, name: str) -> Any: ...
 
 # Below this many valid GPS-tagged records, treat the file as not containing
 # a real tracked round (PRD §4.3 "missing essential coordinates").
@@ -70,11 +81,11 @@ def parse_fit_activity(source: str | bytes | BinaryIO) -> FitParseResult:
     try:
         fit_file = FitFile(source)
 
-        for mesg in fit_file.get_messages("session"):
+        for mesg in cast(Iterable[_FitMessage], fit_file.get_messages("session")):
             sport = mesg.get_value("sport") or sport
             started_at = mesg.get_value("start_time") or started_at
 
-        for mesg in fit_file.get_messages("record"):
+        for mesg in cast(Iterable[_FitMessage], fit_file.get_messages("record")):
             lat_raw = mesg.get_value("position_lat")
             lng_raw = mesg.get_value("position_long")
             if lat_raw is None or lng_raw is None:

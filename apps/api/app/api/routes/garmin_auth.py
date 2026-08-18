@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
 from app.core.config import settings
+from app.core.orm_typing import persisted
 from app.models import GarminConnection
 from app.services.garmin_oauth import (
     GarminOAuthError,
@@ -24,7 +25,7 @@ def start_garmin_authorize(user: CurrentUser) -> dict:
     browser to. Kept as a JSON response (not a server-side redirect) so a
     single-page app can drive the navigation itself."""
     try:
-        request = build_authorize_request(user.id)
+        request = build_authorize_request(persisted(user.id))
     except GarminOAuthError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     return {"authorize_url": request.url}

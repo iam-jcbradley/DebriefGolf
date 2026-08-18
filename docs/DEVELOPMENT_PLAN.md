@@ -874,7 +874,7 @@ clean, eslint clean.
 - Audit-wizard pin capture, short-siding trend-over-time, and live in-round
   pin capture remain explicitly out of scope — see Backlog.
 
-## Phase 15 — Password Reset & Account Recovery
+## Phase 15 — Password Reset & Account Recovery (done)
 
 Goal: the trimmed remainder of what was originally a five-item auth phase.
 Phase 10 shipped real authentication and listed five things it deliberately
@@ -886,48 +886,90 @@ infrastructure this phase doesn't need (a shared counter/cache store) or an
 actual signal of demand this app doesn't have yet. See the Backlog for where
 those three went and why.
 
-- [ ] **An email-sending path** (`app/services/email.py`). Development writes
+- [x] **An email-sending path** (`app/services/email.py`). Development writes
   the message to the log (no SMTP server in the dev sandbox, and the repo's
   convention is to make the unverifiable boundary obvious rather than
-  pretend); production takes SMTP or a provider API key from settings.
-  Follows the `garmin_oauth.py` / `osm_courses.py` convention:
-  standards-conformant code, unit-tested against a mocked transport,
-  verification limit stated plainly in the module docstring.
-- [ ] **Password reset** (Phase 10 gap: "a forgotten password currently means
+  pretend); production takes SMTP over stdlib `smtplib` using new `SMTP_*`
+  settings (`app/core/config.py`, `.env.example`). Follows the
+  `garmin_oauth.py` / `osm_courses.py` convention: standards-conformant code,
+  unit-tested against a mocked `smtplib.SMTP` (dev no-op path, TLS/login
+  branches, and both connection- and send-time failures raising `EmailError`
+  — `tests/test_email.py`), verification limit stated plainly in the module
+  docstring.
+- [x] **Password reset** (Phase 10 gap: "a forgotten password currently means
   a new account"). Request → single-use signed token emailed to the account
-  → set a new password. `app/core/signing.py` already does signed, expiring,
-  self-contained tokens for two other purposes (the session cookie and the
-  Garmin OAuth `state`), so this is a third caller, not a third
-  implementation. The response to a reset request must not reveal whether an
-  account exists — same reasoning as `POST /auth/login`'s deliberately
-  identical answer for "no such account" and "wrong password". UI: two named
+  → set a new password, at `POST /auth/forgot-password` /
+  `POST /auth/reset-password` (`app/api/routes/auth.py`). Built on
+  `app/core/signing.py` as planned — a third caller, not a third
+  implementation — but "single-use" needed one more piece than the plan
+  named: with no server-side token store, a reset token is bound to a
+  fingerprint of the account's *current* password hash
+  (`_password_fingerprint` in `app/core/security.py`); redeeming it changes
+  the hash, so the same token fails a second time on its own, no revocation
+  list required. `password_hash IS NULL` is a real, fingerprintable input
+  (hashes to `"no-password-set"`), not a special case, which is what lets a
+  pre-Phase-10 account through the same path with no branch for it anywhere.
+  `POST /auth/forgot-password` returns the identical `{"ok": true}` whether
+  or not the email has an account — same reasoning as `POST /auth/login`'s
+  deliberately identical wrong-password/no-account answer. UI: two named
   pages, `/forgot-password` and `/reset-password/[token]`, in the existing
   `/login` visual register — no alarm styling, dry factual copy ("Check your
   email for a reset link"), matching `docs/STYLE_GUIDE.md`'s ban on
-  exclamation points and apology theater.
-- [ ] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
-  Phase 13, not built there — see Phase 13's gap list). A 401 from `apiFetch`
-  clears the client-side user and bounces to `/login`. Copy decision, made
-  here rather than left to whoever wires the SWR `onError` handler: a plain,
-  dry line ("Signed out — sign in again"), not a bare silent redirect and
-  not alarm language either way.
-- [ ] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
-  `password_hash` can't log in and need a password set out of band). Password
-  reset above is the mechanism that closes this — worth an explicit test that
-  a null-hash account can recover, since that's the whole reason the gap was
-  noted.
+  exclamation points and apology theater. `/login` gained a "Forgot your
+  password?" link in sign-in mode.
+- [x] **The 401 interceptor Phase 13 missed** (Phase 10 gap, mis-assigned to
+  Phase 13, not built there — see Phase 13's gap list). `apiFetch` now calls
+  a registered handler on any 401 outside a small exempt list (`/auth/me`,
+  `/auth/login`, `/auth/register`, and the two reset endpoints above — the
+  flows where a 401 is the ordinary, expected answer, not a session gone bad
+  mid-use). `CurrentUserProvider` registers the handler and gates it on its
+  own current `user` state via a ref, so an anonymous visitor's routine 401s
+  don't get treated as an expired session — only a tab that actually
+  thought someone was signed in gets bounced, to `/login?expired=1`, which
+  renders the copy decision this item called for: a plain "Signed out — sign
+  in again.", not a bare silent redirect and not alarm language either way.
+- [x] **Pre-Phase-10 accounts** (Phase 10 gap: rows with a null
+  `password_hash` can't log in and need a password set out of band). Closed
+  by the reset-token fingerprint scheme above; `TestForgotPassword` and
+  `TestResetPassword` in `tests/test_auth_routes.py` each have a dedicated
+  test constructing a `password_hash=None` account and taking it through the
+  real HTTP path end to end, not just asserting against the token internals.
 
-**Acceptance criteria:** a password reset round-trips end to end against a
-real Postgres instance (request → token → new password → login with it), and
-the same test proves the old password stops working. `tests/
-test_access_control.py` still passes unchanged — the new endpoints are
-public by necessity (you can't hold a session while recovering one), so
-each must be added to `PUBLIC_ENDPOINTS` with a written reason, not to make
-the test pass. A session-expiry test confirms a stale cookie's next request
-clears client state and redirects rather than rendering page-level error
-text.
+**Acceptance criteria, verified:** a real script (not just the test suite)
+called `POST /auth/forgot-password` against the running dev stack for the
+seeded demo account, read the token out of the logged dev-mode email, drove
+`/reset-password/[token]` in an actual browser (Chromium, this sandbox's
+pre-installed one) to a real new password, confirmed the dashboard rendered
+signed-in afterward, then confirmed via `/auth/login` that the old password
+now 401s and the new one 200s — and the demo account's documented password
+was reset back to its seeded value afterward so `make seed`'s printed
+credentials stay correct for the next person. `tests/test_access_control.py`
+needed no logic changes, only its `PUBLIC_ENDPOINTS` allowlist grew by the
+two new routes, each with a written reason, matching the plan. A dedicated
+interceptor test confirms a stale-session 401 clears client state and
+redirects with `?expired=1` rather than rendering page-level error text, and
+a sibling test confirms an anonymous visitor's 401 does neither. 389 backend
+tests (up from 370: `TestForgotPassword`, `TestResetPassword`, and
+`tests/test_email.py`), ruff clean, pyright clean (0 errors; new warnings are
+all the same pre-existing nullable-id pattern Phase 17 owns, no new
+category). 364 frontend tests (up from 337: the interceptor in
+`api.test.ts`/`current-user.test.tsx`, the two new pages, and `/login`'s
+additions), `tsc --noEmit` clean, eslint clean.
 
-## Phase 16 — Aggregate Query Push-Down & Export Bounding
+**Gaps carried forward:**
+- **Rate limiting a reset request is still absent** — same Phase 10/11 gap
+  the Backlog already tracks for login/register, now with a third public
+  endpoint sharing it. Not new scope for this phase; noted so it isn't
+  rediscovered as if it were.
+- **The reset email is plain text**, matching this app's other outbound
+  surface (none, until now) rather than introducing an HTML-email templating
+  dependency for one transactional message.
+- **`smtplib` over TLS/auth is unit-tested against a mock, not a real SMTP
+  server** — the same unverifiable-boundary limit `garmin_oauth.py` and
+  `osm_courses.py` already carry, stated in `email.py`'s own docstring
+  rather than pretended away.
+
+## Phase 16 — Aggregate Query Push-Down & Export Bounding (done)
 
 Goal: Phase 11 ended with two "not worth it until someone has that much
 data" notes. The review cut the third item this phase originally carried —
@@ -938,59 +980,233 @@ a wrong Strokes Gained number is a bad trade for shaving single-digit
 milliseconds off an endpoint that isn't slow. Revisit only if profiling ever
 shows otherwise — see the Backlog.
 
-- [ ] **Push aggregation into SQL** for `GET /bag` and both practice
+- [x] **Push aggregation into SQL** for `GET /bag` and both practice
   endpoints (Phase 11 gap: "now bound by Python-side aggregation over all of
-  a user's shots, ~200ms at 21,600"). The real obstacle is named in that same
-  note — Smart Bag's IQR outlier rejection is a two-pass operation that has
-  to move into SQL (`percentile_cont`, or a per-club summary table refreshed
-  on write) without changing which shots get rejected. Output must match the
-  current Python implementation within numeric tolerance on the seeded demo
-  round — not byte-identical, which `percentile_cont` vs. NumPy's
-  `percentile` can't guarantee given differing floating-point summation
-  order.
-- [ ] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
-  returns every row the user owns, by definition"). Streaming response or a
-  background job; the privacy commitment in `docs/DATA_PRIVACY.md` is that
-  the export exists and is complete, not that it's instant, so this is about
-  not holding an entire account in memory rather than about latency.
-- [ ] **Re-run `scripts/benchmark.py`** and record real before/after numbers
-  in this entry, the way Phase 11's table does. This repo's stated rule is
-  measure before changing; a performance phase that reports no numbers has
-  skipped its own acceptance criteria.
+  a user's shots, ~200ms at 21,600"). The real obstacle named in that same
+  note — Smart Bag's IQR outlier rejection is a two-pass operation — moved
+  into SQL as three CTEs in `club_carry_dispersion_sql`
+  (`app/api/routes/_shot_queries.py`): quartiles via `percentile_cont`,
+  Tukey fences from those quartiles (skipped, via a `NULL` bound, for clubs
+  under `MIN_SAMPLES_FOR_IQR`), then a `FILTER`-qualified aggregate for the
+  survivors. `percentile_cont`'s ordered-set interpolation turned out to
+  match NumPy's default `percentile` method to the float on every sample
+  tried, both a synthetic dataset and every club in the seeded demo round,
+  verified directly against a live Postgres instance before writing any
+  application code — but `avg()`/`percentile_cont()` and Python's
+  `statistics.fmean`/`pstdev` aren't guaranteed the same summation order in
+  general, so the test suite compares to a `1e-9` tolerance rather than
+  leaning on that empirical match holding for every possible input (see the
+  acceptance-criteria note below). Lateral dispersion deliberately stayed in
+  Python: it's already the smaller query (only located shots), and pushing
+  its flat-earth trig into
+  SQL would risk a third copy of `app/services/geometry.py`'s
+  `YARDS_PER_DEGREE_LAT` alongside the existing TypeScript mirror — not a
+  trade this phase's own named obstacle called for. `GET /bag` no longer
+  calls `fetch_on_course_shots` at all; `GET /practice/delivery` only calls
+  the new SQL function; `GET /practice/combines` still calls
+  `fetch_on_course_shots` for its Strokes-Gained bracket and putting
+  evaluation, unrelated to the IQR obstacle this phase targeted.
+- [x] **Bound `GET /me/export`** (Phase 11 gap: "unchanged and unbounded — it
+  returns every row the user owns, by definition"). Rewritten as a
+  `StreamingResponse` (`app/api/routes/privacy.py`) that fetches one round's
+  shots (or one practice session's shots) at a time and yields each round/
+  session object as soon as it's serialized, rather than grouping every shot
+  the user has ever recorded into one dict before any of it is sent. Peak
+  memory is now O(one round's shots) instead of O(every shot the user
+  owns). This trades one big query for one small query per round/session —
+  explicitly sanctioned by this item's own framing below — rather than a
+  true DB-level server-side cursor, which would have needed to interact with
+  Phase 9's savepoint-based transactional test isolation in ways this phase
+  didn't need to risk for a "not about latency" requirement.
+- [x] **Re-run `scripts/benchmark.py`** and record real before/after numbers
+  in this entry, the way Phase 11's table does.
 
-**Acceptance criteria:** the benchmark table above, filled in with real
-medians. Smart Bag output within numeric tolerance before and after the SQL
-push-down on the seeded demo round, including the deliberately-planted
-outlier shot that Phase 2's tests already rely on.
+| endpoint | before | after | |
+|---|---|---|---|
+| `GET /bag` | 244.0 | 43.2 | **5.6x** |
+| `GET /practice/delivery` | 241.0 | 43.7 | **5.5x** |
+| `GET /practice/combines` | 315.1 | 292.6 | still walks every shot for its SG bracket + putting — unrelated to this phase's IQR push-down |
+| `GET /me/export` | 462.0 | 708.0 | **slower, by design** — 300 small queries instead of 2 big ones; see gaps below |
 
-## Phase 17 — Type-Safety Follow-Through
+(Unlisted endpoints — `GET /rounds`, `GET /rounds?limit=1`,
+`GET /rounds/{id}/analytics`, `GET /rounds/{id}/holes` — are untouched by
+this phase and unchanged within noise of Phase 11's numbers.)
+
+**Acceptance criteria, verified:** `tests/test_shot_queries.py` compares
+`club_carry_dispersion_sql`'s output directly against
+`app/services/smart_bag.py`'s `compute_dispersion` on identical samples,
+including the six-sample `[248, 250, 252, 251, 249, 400]` set
+`tests/test_bag_route.py`'s planted-outlier test already relies on —
+which samples get kept/excluded and the resulting count match exactly;
+mean/median/stdev are compared to `1e-9` rather than `==`, since Postgres's
+and Python's summation order aren't guaranteed identical in general even
+though they land on the same float for every case tried here. A
+below-`MIN_SAMPLES_FOR_IQR` case, the exact-boundary case (`n ==
+MIN_SAMPLES_FOR_IQR` with a real outlier present), independent multi-club
+aggregation, cross-user scoping, and the empty-string/putter/non-positive-
+carry exclusions all get their own test. `tests/test_privacy_routes.py`
+gained two tests seeding two rounds (and two practice sessions) with
+different clubs each, to catch a round/session mix-up in the new
+per-entity streaming query — a real risk this refactor introduced that the
+single-query original couldn't have had. 397 backend tests (up from 389),
+ruff clean. Verified live against the running dev stack (not just
+`scripts/benchmark.py`'s bench database): `GET /bag`,
+`GET /practice/delivery`, `GET /practice/combines`, and `GET /me/export`
+all called against the seeded demo account and inspected by hand, plus a
+Chromium pass over `/rounds/{id}` (which calls `getSmartBag()` for its
+dispersion ellipse) and `/practice` confirming no visual or console
+regression. No frontend files changed this phase — the response shapes
+are identical, only how they're computed and delivered.
+
+**Five-perspective panel, run before marking this phase done:** PM,
+developer, QA, and end-user reads (no UI changed this phase, so no
+designer read). PM and end-user reads both approved the export-latency
+trade as-is — the export is a low-frequency GDPR/CCPA action, not a
+hot-path screen, and going from ~460ms to ~710ms doesn't register against
+either the PRD's success metrics or the DATA_PRIVACY.md commitment being
+about completeness, not speed. The QA and developer reads each found real
+issues, since fixed: an `empty club == ""` divergence where the SQL only
+filtered `IS NOT NULL` but `shot_carry_distance`'s Python original also
+excluded the empty string, which would have silently surfaced a bogus
+`""` club group; an untested `n == MIN_SAMPLES_FOR_IQR` boundary case
+(added above); dead code (`compute_club_gapping` and `shot_carry_distance`
+had zero production callers left once `bag.py`/`practice.py` were cut over
+— deleted, along with `build_club_gapping` being a near-duplicate of
+`compute_club_gapping` it should have delegated to instead — replaced with
+a `TestBuildClubGapping` unit test covering the function actually in use
+now); and the mean/stdev-equality over-claim this section and the
+`percentile_cont` item above have since been reworded to match. Left as a
+named, accepted gap rather than fixed: a mid-stream export failure now
+serves a truncated 200 instead of a clean 500 (see below).
+
+**Gaps carried forward:**
+- **`GET /me/export` got slower, not just unbounded-in-memory-but-otherwise-
+  fine.** 300 rounds' worth of one-query-per-round adds real round-trip
+  overhead the original's two big queries didn't pay — 708ms vs. 462ms at
+  this benchmark's volume, all against a local Postgres with no network
+  latency to speak of. A real deployment with non-trivial DB round-trip time
+  would feel this more, not less. This item's own acceptance framing ("not
+  holding an entire account in memory rather than about latency") sanctions
+  the trade, but a future pass could close both gaps at once with a single
+  ordered shots query merge-joined against the rounds iterator instead of
+  one query per round — deferred here because it requires both streams
+  consistently ordered (round id rather than the current `played_at`), which
+  touches more than this phase's stated scope.
+- **A mid-stream failure on `GET /me/export` now serves a truncated 200
+  instead of a clean 500.** `StreamingResponse` commits to the 200 status
+  and starts sending bytes before every round has been fetched, so a DB
+  error partway through (round 150 of 300, say) produces an incomplete JSON
+  body under a success status rather than the old buffered version's
+  all-or-nothing response. Inherent to streaming and a reasonable cost for
+  the memory bound this item exists to deliver, but worth naming plainly for
+  a GDPR/CCPA access endpoint rather than leaving it implicit.
+- **`GET /practice/combines` only picked up a small win** (315.1ms →
+  292.6ms) because its dominant cost — `fetch_on_course_shots` for the
+  Strokes-Gained bracket and `evaluate_putting` — was never the IQR
+  aggregation this phase's own text named as "the real obstacle." Pushing
+  those into SQL too is a real follow-up but a different one: SG-bracket
+  filtering and putting classification aren't outlier-rejection problems,
+  so `percentile_cont` doesn't apply, and each would need its own
+  correctness argument the way `club_carry_dispersion_sql` got here.
+- **The streaming export still does N+1 queries against practice sessions**
+  the same way it does against rounds — not separately benchmarked above
+  since the seeded demo account and this benchmark's synthetic data both
+  have only one practice session, so its contribution to the 708ms figure
+  is real but small next to the 300-round cost. Would be fixed by the same
+  merge-join redesign as the rounds gap above.
+
+## Phase 17 — Type-Safety Follow-Through (done, one item needs a human)
 
 Goal: Phase 12 added pyright, fixed the two real bugs it found, and demoted
 five rule categories to `warning` with a written justification. That was the
 right call for a phase whose job was "add a type checker" — it is not a
 permanent answer, and the justification says so.
 
-- [ ] **Narrow the nullable-primary-key pattern.** ~60 of the 99 warnings are
-  `id: int | None` on rows that were just fetched or just committed and
-  therefore always have one. A small `persisted(obj)` helper that narrows the
-  type at the handful of boundaries beats ~90 individual ignore comments.
-- [ ] **Annotate geometry columns honestly.** `WKTElement` assigned to a
-  column declared `str | None` is the second-largest cluster. GeoAlchemy2 ships
-  type information; the models predate anyone checking.
-- [ ] **Re-promote the five rules to `error`** in `pyproject.toml` once the
-  count is zero, so the demotion doesn't quietly become permanent — that is
-  the entire point of doing this phase at all.
-- [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
-  but unverified, because this sandbox blocks registry blob fetches). This
-  needs no work — it verifies itself on the first CI run against GitHub's
-  runners — but it needs someone to *look*, and it should be checked off by a
-  human who did.
+The warning count had grown to 121 by the time this phase started (up from
+Phase 12's 101/103 — later phases kept adding SQLModel-facing code, as
+expected), and it broke down into more than the two named clusters:
+nullable-PK mismatches (~60) and geometry-column mismatches (~10) were real
+and exactly as described, but the largest remaining cluster (~50) was a
+third, unnamed shape — SQLModel types a class attribute's *static* access
+(`Shot.id`, `Shot.club`, `Round.played_at`) as the column's plain Python
+type (`int | None`, `str | None`, `datetime`) rather than the SQLAlchemy
+column-expression it actually is at that level, so `.order_by()`, `.join()`
+predicates, `.is_not()`, `.in_()`, and `.desc()` all fail to type-check even
+on perfectly correct SQLAlchemy code. This is a known, long-standing
+SQLModel/pyright gap (SQLModel's fields are Pydantic-typed for validation,
+not `Mapped[]`-typed for the ORM side), not something introduced here.
 
-**Acceptance criteria:** `uv run pyright` reports 0 errors and 0 warnings with
-all five rules at `error`. No new blanket `# type: ignore` — each remaining
-suppression, if any, names the specific upstream stub gap it works around.
-Test suite unchanged in count and all green, since this phase should change
-no behavior whatsoever.
+- [x] **Narrow the nullable-primary-key pattern.** `app/core/orm_typing.py`'s
+  `persisted(id_: T | None) -> T` raises `AssertionError` on `None`
+  (surfacing a real bug loudly, not silently returning a wrong type) and is
+  otherwise identity — applied at ~50 call sites across `app/api/routes/*.py`
+  and `app/db/seed.py` wherever a route reads `row.id`/`row.user_id`/etc. off
+  a row it just fetched or committed+refreshed.
+- [x] **Annotate geometry columns honestly.** `course.py`'s `Hole` fields,
+  `Shot.location`, and `RoundHolePin.location` are now typed `WKTElement`
+  (`| None` where nullable) instead of `str | None` — matching every
+  constructor call site (`_point()`/`_polygon()` in `courses.py`/`seed.py`,
+  `WKTElement(...)` in `rounds.py`), never `str`. `WKTElement` has no
+  Pydantic schema of its own, so each of those three model classes also
+  picked up `model_config = {"arbitrary_types_allowed": True}` — these
+  tables are never validated against untrusted input (always built
+  internally with a real `WKTElement`), so there's nothing to validate.
+- [x] **The unnamed third cluster.** `app/core/orm_typing.py`'s `col(attr:
+  Any) -> Any` is `Any`-typed identity, reached for only at query-
+  construction call sites where pyright is flatly wrong about what
+  `SomeModel.column` is — never to paper over an actual mismatch. Applied at
+  ~40 call sites. Two related, narrower stub gaps got scoped
+  `# type: ignore[the specific rule]` instead, each with an inline comment
+  naming the gap, since no type-level fix existed: SQLModel's typed
+  `select()` overloads cap at 4 positional columns (beyond that there's no
+  matching overload at all, typed or `Any`-typed — verified directly, not
+  assumed) — 6 call sites selecting 5+ raw columns; and a multi-column
+  select's row type resolves to a bare `tuple[...]` rather than the
+  named-attribute `Row` it actually is at runtime once `.label()` is
+  involved — 2 call sites. `Shot.__table__` (real at runtime, untyped by
+  SQLModel) got the same treatment, 1 site. Two further issues turned out to
+  have real fixes instead of needing a workaround:
+  `app/services/parsers/fit_parser.py`'s `fitparse` library ships no type
+  stubs at all, so a local `_FitMessage` Protocol + `cast()` types its
+  messages precisely rather than guessing at a suppression; and
+  `app/services/putting.py`'s `evaluate_putting(shots: list[ShotView])`
+  rejected `list[Shot]` (a real caller, `rounds.py`'s single-round analytics
+  endpoint, which loads full `Shot` ORM objects) purely from `list`'s
+  invariance despite `Shot` structurally satisfying `ShotView` — changed to
+  `Sequence[ShotView]`, correct for a read-only parameter regardless of the
+  typing issue it also happens to fix.
+- [x] **Re-promote the five rules to `error`** in `pyproject.toml`. Verified
+  clean with `reportUnnecessaryTypeIgnoreComment` also enabled (temporarily,
+  not committed — it's a one-time check, not an ongoing rule this repo has
+  opted into): one pre-existing ignore in `_shot_queries.py` (predating this
+  phase) turned out to have become unnecessary as a side effect of an
+  unrelated fix nearby and was removed, leaving 10 scoped ignores, all
+  confirmed live.
+- [ ] **Confirm the Docker build job actually passes** (Phase 12 gap: correct
+  but unverified, because this sandbox blocks registry blob fetches). Still
+  needs a human to look at the first CI run against GitHub's runners and
+  check this box — no code changes this phase touch that job either way.
+
+**Acceptance criteria, verified:** `uv run pyright app/` reports 0 errors, 0
+warnings, 0 informations with all five rules at `error`
+(`app/api/routes/rounds.py` alone went from 44 warnings to 0). Every
+remaining suppression is a scoped `# type: ignore[rule]` with an inline
+comment naming the specific gap — no bare `# type: ignore`, confirmed by
+grep. 401 backend tests, up from 397 at the start of this phase — the 4 new
+tests (`tests/test_orm_typing.py`, covering `persisted()`'s pass-through
+including the `0`-is-not-`None` case, its raise-on-`None` path, and `col()`'s
+identity) are for the two new primitives this phase added, not a behavior
+change to anything existing; every other file's test count is identical,
+and none of their assertions changed. ruff clean. Verified live against the
+running dev stack: `GET /bag`, `/practice/delivery`, `/practice/combines`,
+`/me/export`, `/rounds?limit=1`, `/rounds/{id}/holes`,
+`/rounds/{id}/analytics`, `/rounds/{id}/holes/{n}/replay`, `/rounds/{id}/shots`,
+and `/courses` all called against the seeded demo account and inspected by
+hand — identical output to before this phase (same Strokes Gained totals,
+same putting percentages, same hole geometry). A Chromium pass over `/`,
+`/rounds`, `/rounds/{id}`, `/practice`, and `/virtual-bag` showed zero new
+console errors. 364 frontend tests unaffected (no frontend files changed —
+this phase is backend typing only).
 
 ## Not scheduled — blocked on something other than engineering time
 
@@ -1061,14 +1277,17 @@ them is waiting on a decision I can make or work I can do.
   a separate lookup, and re-run `scripts/benchmark.py` either way — the plan
   review's developer read flagged this as the one change in this document
   that can plausibly slow every endpoint.
-- **Login/register/upload rate limiting** (Phase 10 *and* 11 gap, also
-  deferred from the first draft's Phase 14). Still real — Argon2 makes one
-  guess expensive, which is not the same as bounding the number of guesses —
-  just not urgent enough to lead with. Needs a decision this repo hasn't had
-  to make yet: there's no Redis or equivalent shared store in
-  `docker-compose.yml` today, only Postgres, and in-memory counters don't
-  work once there's more than one worker process. Build the counters on
-  Postgres, or add a shared cache, before writing the limiter itself.
+- **Login/register/upload/forgot-password rate limiting** (Phase 10 *and* 11
+  gap, also deferred from the first draft's Phase 14; Phase 15 added a
+  fourth public endpoint sharing it rather than closing it). Still real —
+  Argon2 makes one password guess expensive, which is not the same as
+  bounding the number of guesses, and `forgot-password` triggers a real
+  email send per request — just not urgent enough to lead with. Needs a
+  decision this repo hasn't had to make yet: there's no Redis or equivalent
+  shared store in `docker-compose.yml` today, only Postgres, and in-memory
+  counters don't work once there's more than one worker process. Build the
+  counters on Postgres, or add a shared cache, before writing the limiter
+  itself.
 - **Caching `GET /rounds/{id}/analytics`** (cut from Phase 16's first draft
   by the plan review). Phase 11 already got this endpoint to 5.7ms; a cache
   whose key can miss the round's shots, its course, or the caller's handicap

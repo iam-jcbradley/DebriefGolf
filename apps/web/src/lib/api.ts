@@ -309,12 +309,37 @@ function extractErrorMessage(responseText: string): string {
   return responseText;
 }
 
+// Endpoints where a 401 is the ordinary, expected answer rather than a
+// session that just expired out from under an already-signed-in player:
+// the ambient "am I signed in?" check on every page load, and the auth
+// flows that either establish a session or don't need one yet.
+const UNAUTHORIZED_INTERCEPTOR_EXEMPT_PATHS = [
+  "/api/auth/me",
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/auth/forgot-password",
+  "/api/auth/reset-password",
+];
+
+type UnauthorizedHandler = () => void;
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+/** `CurrentUserProvider` is the one caller — see its comment for why. A
+ * plain module-level callback rather than an event target because there's
+ * only ever one interested party, and it needs no history of past events. */
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
+}
+
 async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   // `credentials: "include"` sends the session cookie. The API is on a
   // different origin from the web app (:8000 vs :3000), so without this the
   // browser omits it and every call 401s.
   const response = await fetch(`${API_URL}${path}`, { credentials: "include", ...init });
   if (!response.ok) {
+    if (response.status === 401 && !UNAUTHORIZED_INTERCEPTOR_EXEMPT_PATHS.includes(path)) {
+      unauthorizedHandler?.();
+    }
     const text = await response.text();
     throw new ApiError(response.status, extractErrorMessage(text) || response.statusText);
   }
@@ -639,6 +664,37 @@ export function login(payload: LoginInput): Promise<UserProfile> {
 
 export function logout(): Promise<{ logged_out: boolean }> {
   return apiFetch<{ logged_out: boolean }>("/api/auth/logout", { method: "POST" });
+}
+
+export interface ForgotPasswordInput {
+  email: string;
+}
+
+/** Always resolves `{ ok: true }`, whether or not the email has an account
+ * — same shape as the backend's response, so the page rendering it can't
+ * accidentally reveal which. */
+export function requestPasswordReset(payload: ForgotPasswordInput): Promise<{ ok: boolean }> {
+  return apiFetch<{ ok: boolean }>("/api/auth/forgot-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface ResetPasswordInput {
+  token: string;
+  password: string;
+}
+
+/** Throws `ApiError` with status 422 for an invalid, expired, or
+ * already-redeemed token, or a password that doesn't meet the minimum
+ * length. Succeeding also signs the caller in, same as `register`. */
+export function resetPassword(payload: ResetPasswordInput): Promise<UserProfile> {
+  return apiFetch<UserProfile>("/api/auth/reset-password", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 /** Throws `ApiError` with status 401 when nobody is signed in. */

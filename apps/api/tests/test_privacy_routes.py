@@ -107,6 +107,81 @@ class TestExportUserData:
         assert body["virtual_rounds"] == []
         assert body["garmin_connected"] is False
 
+    def test_groups_shots_correctly_across_multiple_rounds(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        # The export is now streamed one round's shots at a time (Phase 16)
+        # rather than assembled from one query grouped in Python — this
+        # guards against a round mix-up in that per-round query.
+        course = Course(name="Multi Round Course")
+        db_session.add(course)
+        db_session.commit()
+        db_session.refresh(course)
+
+        hole = Hole(course_id=course.id, number=1, par=4, yardage=400)
+        db_session.add(hole)
+        db_session.commit()
+        db_session.refresh(hole)
+
+        round_a = Round(
+            user_id=user.id, course_id=course.id, total_score=80, status=RoundStatus.verified
+        )
+        round_b = Round(
+            user_id=user.id, course_id=course.id, total_score=95, status=RoundStatus.verified
+        )
+        db_session.add(round_a)
+        db_session.add(round_b)
+        db_session.commit()
+        db_session.refresh(round_a)
+        db_session.refresh(round_b)
+
+        db_session.add(
+            Shot(
+                round_id=round_a.id, hole_id=hole.id, shot_number=1, club="Driver",
+                start_lie=Lie.tee, end_lie=Lie.fairway,
+                start_distance_yards=400, end_distance_yards=150,
+            )
+        )
+        db_session.add(
+            Shot(
+                round_id=round_b.id, hole_id=hole.id, shot_number=1, club="7-Iron",
+                start_lie=Lie.tee, end_lie=Lie.fairway,
+                start_distance_yards=400, end_distance_yards=250,
+            )
+        )
+        db_session.commit()
+
+        response = auth_client.get("/api/me/export")
+
+        body = response.json()
+        assert len(body["rounds"]) == 2
+        by_id = {r["id"]: r for r in body["rounds"]}
+        assert [s["club"] for s in by_id[round_a.id]["shots"]] == ["Driver"]
+        assert [s["club"] for s in by_id[round_b.id]["shots"]] == ["7-Iron"]
+
+    def test_groups_shots_correctly_across_multiple_practice_sessions(
+        self, auth_client: TestClient, db_session: Session, user: User
+    ) -> None:
+        session_a = PracticeSession(user_id=user.id, source="R10")
+        session_b = PracticeSession(user_id=user.id, source="R50")
+        db_session.add(session_a)
+        db_session.add(session_b)
+        db_session.commit()
+        db_session.refresh(session_a)
+        db_session.refresh(session_b)
+
+        db_session.add(PracticeShot(session_id=session_a.id, club="Driver", smash_factor=1.4))
+        db_session.add(PracticeShot(session_id=session_b.id, club="7-Iron", smash_factor=1.3))
+        db_session.commit()
+
+        response = auth_client.get("/api/me/export")
+
+        body = response.json()
+        assert len(body["practice_sessions"]) == 2
+        by_id = {s["id"]: s for s in body["practice_sessions"]}
+        assert [s["club"] for s in by_id[session_a.id]["shots"]] == ["Driver"]
+        assert [s["club"] for s in by_id[session_b.id]["shots"]] == ["7-Iron"]
+
 
 class TestDeleteUserData:
     def test_deletes_the_user_and_everything_they_own(

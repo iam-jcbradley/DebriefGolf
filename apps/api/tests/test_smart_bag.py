@@ -1,23 +1,11 @@
-from app.models.shot import Lie, Shot
 from app.services.smart_bag import (
     ClubGappingStats,
-    compute_club_gapping,
+    build_club_gapping,
     compute_dispersion,
     compute_gaps,
     reject_outliers_iqr,
-    shot_carry_distance,
     sort_by_club_order,
 )
-
-
-def _shot(**kwargs) -> Shot:
-    defaults = dict(
-        round_id=1, hole_id=1, shot_number=1, club="7-Iron",
-        start_lie=Lie.fairway, end_lie=Lie.green,
-        start_distance_yards=150, end_distance_yards=6.0,
-    )
-    defaults.update(kwargs)
-    return Shot(**defaults)
 
 
 class TestRejectOutliersIqr:
@@ -62,10 +50,17 @@ class TestComputeDispersion:
         assert stats.stdev == 0.0
 
 
-class TestComputeClubGapping:
+class TestBuildClubGapping:
+    """`build_club_gapping` pairs already-computed carry `DispersionStats`
+    (the SQL push-down's output — see tests/test_shot_queries.py) with
+    lateral dispersion, still computed here from raw samples."""
+
     def test_multiple_clubs_independent_stats(self) -> None:
-        stats = compute_club_gapping(
-            {"Driver": [250.0, 255.0, 245.0], "7-Iron": [150.0, 152.0, 148.0]}
+        stats = build_club_gapping(
+            {
+                "Driver": compute_dispersion([250.0, 255.0, 245.0]),
+                "7-Iron": compute_dispersion([150.0, 152.0, 148.0]),
+            }
         )
         by_club = {s.club: s for s in stats}
         assert by_club["Driver"].carry.mean == 250.0
@@ -73,8 +68,8 @@ class TestComputeClubGapping:
         assert by_club["Driver"].lateral is None
 
     def test_lateral_stats_populated_when_provided(self) -> None:
-        stats = compute_club_gapping(
-            {"Driver": [250.0, 255.0, 245.0]},
+        stats = build_club_gapping(
+            {"Driver": compute_dispersion([250.0, 255.0, 245.0])},
             lateral_by_club={"Driver": [-5.0, 3.0, -1.0]},
         )
         assert stats[0].lateral is not None
@@ -132,18 +127,3 @@ class TestClubGaps:
         gaps = compute_gaps(stats)
         assert len(gaps) == 1
         assert gaps[0].shorter_club == "7-Iron"
-
-
-class TestShotCarryDistance:
-    def test_full_swing_shot(self) -> None:
-        shot = _shot(club="7-Iron", start_distance_yards=150, end_distance_yards=10)
-        assert shot_carry_distance(shot) == 140
-
-    def test_putter_returns_none(self) -> None:
-        shot = _shot(club="Putter", start_distance_yards=6, end_distance_yards=0)
-        assert shot_carry_distance(shot) is None
-
-    def test_no_club_returns_none(self) -> None:
-        shot = _shot(club=None, start_lie=Lie.penalty, end_lie=Lie.penalty,
-                      start_distance_yards=150, end_distance_yards=150)
-        assert shot_carry_distance(shot) is None

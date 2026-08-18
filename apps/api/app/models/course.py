@@ -1,4 +1,5 @@
 from geoalchemy2 import Geometry
+from geoalchemy2.elements import WKTElement
 from sqlalchemy import Column
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -17,19 +18,29 @@ class Course(SQLModel, table=True):
 
 
 class Hole(SQLModel, table=True):
+    # WKTElement (below) has no Pydantic schema of its own — this table is
+    # never validated against untrusted input (always constructed
+    # internally with a real WKTElement), so there's nothing to validate.
+    model_config = {"arbitrary_types_allowed": True}
+
     id: int | None = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="course.id", index=True)
     number: int
     par: int
     yardage: int
 
-    tee_location: str | None = Field(
+    # Always written as a WKTElement (see app/api/routes/courses.py's
+    # `_point`/`_polygon`, app/db/seed.py's `_point`) — never read back as
+    # an attribute, since geoalchemy2 hands back a WKBElement instead (see
+    # CLAUDE.md); every read goes through ST_Y/ST_X/ST_AsGeoJSON raw
+    # columns. `str | None` was never the real type on either side.
+    tee_location: WKTElement | None = Field(
         default=None, sa_column=Column(Geometry(geometry_type="POINT", srid=4326))
     )
-    green_center: str | None = Field(
+    green_center: WKTElement | None = Field(
         default=None, sa_column=Column(Geometry(geometry_type="POINT", srid=4326))
     )
-    green_boundary: str | None = Field(
+    green_boundary: WKTElement | None = Field(
         default=None, sa_column=Column(Geometry(geometry_type="POLYGON", srid=4326))
     )
 

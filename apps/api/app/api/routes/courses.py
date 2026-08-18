@@ -5,6 +5,7 @@ from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.orm_typing import col, persisted
 from app.models import Course, Hole
 from app.services.geometry import green_boundary_ring
 from app.services.osm_courses import (
@@ -53,21 +54,21 @@ def _polygon(points: list[LatLngIn]) -> WKTElement:
 
 def _serialize_course(session: Session, course: Course) -> dict:
     holes = session.exec(
-        select(Hole).where(Hole.course_id == course.id).order_by(Hole.number)
+        select(Hole).where(Hole.course_id == course.id).order_by(col(Hole.number))
     ).all()
 
     geo_by_hole: dict[int, dict] = {}
     hole_ids = [hole.id for hole in holes]
     if hole_ids:
         rows = session.exec(
-            select(
+            select(  # type: ignore[reportCallIssue]
                 Hole.id,
                 func.ST_Y(Hole.tee_location).label("tee_lat"),
                 func.ST_X(Hole.tee_location).label("tee_lng"),
                 func.ST_Y(Hole.green_center).label("green_lat"),
                 func.ST_X(Hole.green_center).label("green_lng"),
                 func.ST_AsGeoJSON(Hole.green_boundary).label("green_boundary_geojson"),
-            ).where(Hole.id.in_(hole_ids))
+            ).where(col(Hole.id).in_(hole_ids))
         ).all()
         for row in rows:
             boundary = None
@@ -100,7 +101,7 @@ def _serialize_course(session: Session, course: Course) -> dict:
                 "hole_number": hole.number,
                 "par": hole.par,
                 "yardage": hole.yardage,
-                **geo_by_hole.get(hole.id, empty_geo),
+                **geo_by_hole.get(persisted(hole.id), empty_geo),
             }
             for hole in holes
         ],
@@ -251,7 +252,7 @@ def create_course(
     for h in payload.holes:
         session.add(
             Hole(
-                course_id=course.id,
+                course_id=persisted(course.id),
                 number=h.number,
                 par=h.par,
                 yardage=h.yardage,

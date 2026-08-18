@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import select
 
 from app.api.deps import CurrentUser, SessionDep
+from app.core.orm_typing import col, persisted
 from app.models import SimPlatform, VirtualRound
 
 router = APIRouter()
@@ -30,7 +31,7 @@ def create_virtual_round(
     payload: VirtualRoundCreateIn, user: CurrentUser, session: SessionDep
 ) -> VirtualRound:
     virtual_round = VirtualRound(
-        user_id=user.id,
+        user_id=persisted(user.id),
         platform=payload.platform,
         course_name=payload.course_name,
         played_at=payload.played_at or datetime.now(UTC),
@@ -50,7 +51,7 @@ def list_virtual_rounds(user: CurrentUser, session: SessionDep) -> list[VirtualR
         session.exec(
             select(VirtualRound)
             .where(VirtualRound.user_id == user.id)
-            .order_by(VirtualRound.played_at.desc())
+            .order_by(col(VirtualRound.played_at).desc())
         ).all()
     )
 

@@ -116,6 +116,19 @@ same weakness → combine mapping rather than a second one.
   are all on file; falls back to the original distance/lie proxy otherwise,
   which is still the common case for rounds that predate Phase 14.
 
-**Not yet implemented:** nothing tracked here is outstanding as of Phase 14 —
+**Implemented (Phase 15):**
+- `email.py` — outbound email for password reset. Logs the message instead
+  of sending it whenever `SMTP_HOST` is unset (no SMTP server reachable
+  from this sandbox to verify against — same unverifiable-boundary
+  convention as `garmin_oauth.py`/`osm_courses.py` above); sends over
+  `smtplib` when it is. The reset token itself (HMAC-signed, bound to the
+  account's current password hash so it single-uses itself) lives in
+  `app/core/security.py` alongside session tokens, not here — this module
+  only ever sees a finished message to deliver.
+
+Exposed via `POST /api/auth/forgot-password` and `POST /api/auth/reset-password`
+(`app/api/routes/auth.py`).
+
+**Not yet implemented:** nothing tracked here is outstanding as of Phase 15 —
 see `docs/DEVELOPMENT_PLAN.md`'s per-phase "Gaps carried forward" sections
 for what's still open at the feature level.

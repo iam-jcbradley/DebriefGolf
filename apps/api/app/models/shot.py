@@ -2,6 +2,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING
 
 from geoalchemy2 import Geometry
+from geoalchemy2.elements import WKTElement
 from sqlalchemy import Column, UniqueConstraint
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -31,6 +32,10 @@ class Shot(SQLModel, table=True):
     __table_args__ = (
         UniqueConstraint("round_id", "hole_id", "shot_number", name="uq_shot_round_hole_number"),
     )
+    # WKTElement (location, below) has no Pydantic schema of its own — this
+    # table is never validated against untrusted input (always constructed
+    # internally with a real WKTElement), so there's nothing to validate.
+    model_config = {"arbitrary_types_allowed": True}
 
     id: int | None = Field(default=None, primary_key=True)
     round_id: int = Field(foreign_key="round.id", index=True, ondelete="CASCADE")
@@ -44,7 +49,9 @@ class Shot(SQLModel, table=True):
     start_distance_yards: float
     end_distance_yards: float
 
-    location: str | None = Field(
+    # Always written as a WKTElement, never read back as an attribute — see
+    # app/models/course.py's geometry fields for why `str | None` was wrong.
+    location: WKTElement | None = Field(
         default=None, sa_column=Column(Geometry(geometry_type="POINT", srid=4326))
     )
 
