@@ -1208,6 +1208,275 @@ same putting percentages, same hole geometry). A Chromium pass over `/`,
 console errors. 364 frontend tests unaffected (no frontend files changed —
 this phase is backend typing only).
 
+# Part IV — Reachability (Phases 18-21)
+
+Parts I–III built an analytics engine and then hardened it. Part IV exists
+because a five-perspective review (PM, developer, designer, end-user, QA —
+run as five independent passes with no shared context, per `CLAUDE.md`'s
+review process) found that **the engine is not reachable.** Three seats
+independently, from three different lenses, arrived at the same finding:
+the product's primary loop is severed at both ends.
+
+The convergent findings, each verified directly against the code before
+being written down here:
+
+- **`.FIT` upload produces a permanently dead round.** `upload_fit_activity`
+  (`rounds.py:457`) creates a `Round` with no course and no shots — its own
+  docstring says "course assignment and shot entry happen in the audit
+  wizard" — but no `PATCH /rounds/{id}` exists anywhere in the API, and
+  `create_shots_bulk` 409s on a round with no course (`rounds.py:182`). The
+  documented flow is unimplemented in both directions.
+- **The audit wizard persists nothing.** `audit-wizard.tsx` imports nothing
+  from `@/lib/api` — zero API calls — and on completion shows the user a
+  literal internal doc path: *"that flow isn't built yet (see
+  docs/DEVELOPMENT_PLAN.md Phase 3/4)."* `/rounds` routes every
+  `needs_audit` round straight there (`rounds/page.tsx:28`), where the user
+  is asked to retype shots they already entered.
+- **`RoundStatus.verified` is set in exactly one place: `seed.py:309`.** No
+  user action ever verifies a round, which makes PRD §3's activation KPI
+  (">85% of synced rounds fully verified") structurally unreachable.
+- **Smart Bag has no screen.** `GET /bag` was optimized twice (Phase 11:
+  525ms→195ms; Phase 16: →43ms) and has exactly one caller in the entire
+  frontend — `rounds/[id]/page.tsx:76`, pulling an ellipse for an overlay.
+  A golfer cannot see their own club distances anywhere in this product.
+- **`/rounds/[id]` never fetches analytics**, so PRD §8's entire top band
+  (Round Snapshot, Tiger 5, Coach Brief) is unreachable for every round
+  except the most recent.
+- **Handicap index cannot be set.** It defaults to `0.0`
+  (`models/user.py:10`), `PATCH /auth/me` accepts it, and `updateProfile()`
+  has **zero callers** in the web app. Every Strokes Gained number this
+  product has shown a real user is benchmarked against scratch — and
+  `RoundSnapshot` prints "vs 0 handicap" as though that were chosen.
+
+**One root cause sits under most of this: the project has been verifying
+code, not paths.** Eleven phases' acceptance criteria cite Playwright
+verification and nothing is committed — no dependency, no config, no spec,
+no CI job — so eleven browser passes protect against zero regressions
+despite having caught several of this project's most important bugs. The
+seed script creates a `verified` round with a `total_score` and a 5.0
+handicap, so **no acceptance pass has ever run against the empty account a
+real user starts from.** Phase 12's `docker` job was claimed done having
+never once run to completion (already recorded in `KNOWN_ISSUES.md`), and
+the prod web image bakes in `http://localhost:8000` because
+`NEXT_PUBLIC_*` is inlined at build time and the Dockerfile takes no build
+args — verified to *build*, never to *work*. Same shape every time: "the
+config looks right" standing in for "an artifact ran."
+
+Phase 18 leads because it has the highest convergence and the fewest
+unknowns — it is mostly wiring endpoints and components that already
+exist, and it retires the largest sunk cost in the repo (the audit wizard,
+the FIT parser, and the round-status model each currently produce zero
+user value). The developer read argued for deployability first; that is
+overruled on ordering, not on substance — there are no users to deploy to,
+and shipping today would deploy a product whose front-page CTA leads to a
+dead end. It lands in Phase 20, before any real data exists.
+
+## Phase 18 — Close the Ingestion Loop (not started)
+
+Goal: make one round go all the way through. Every item is either wiring
+something already built or a data-integrity fix in a file the wiring
+touches anyway.
+
+- [ ] **`PATCH /rounds/{id}`** for course assignment, with a course picker
+  on the `needs_audit` dashboard card and in the audit wizard. This is the
+  missing half of `upload_fit_activity`'s own documented contract.
+- [ ] **Audit wizard loads real shots** from `GET /rounds/{id}/shots` and
+  submits through the existing idempotent `POST /rounds/{id}/shots/bulk`.
+  Delete the internal doc path from production UI.
+- [ ] **Set `status = verified`** on successful submit, and fix `roundHref`
+  (`rounds/page.tsx:27`) so a round with shots routes to its replay rather
+  than back into the wizard.
+- [ ] **Run the review queue on the manual-entry path too.** Penalty
+  classification, fringe isolation, and sub-−0.4 SG strike tagging
+  currently never fire on `/rounds/[id]/enter` — the only path that
+  persists.
+- [ ] **Shot payload validation** (QA C1, HIGH): `expected_strokes` raises
+  `ValueError` for a negative distance and for `Lie.hole` at a non-zero
+  distance, and `end_lie` renders the full `LIES` list including `hole`
+  (`hole-shot-entry.tsx:194`, `add-shot-form.tsx:85`) with an independent
+  distance field. The shots commit at `rounds.py:358` *before*
+  `_persist_round_strokes_gained` raises at `:369`, so one such payload
+  500s the request and then 500s `GET /analytics` forever, with no delete
+  endpoint to recover. Validate in `ShotCreateIn` (`end_lie == hole ⇒
+  end_distance == 0`; distances ≥ 0) and/or make `expected_strokes` total
+  for `Lie.hole`.
+- [ ] **Fix the silent 0-yard shot.** `hole-shot-entry.tsx:79` guards with
+  `Number.isNaN`, but `Number("")` is `0`, not `NaN` — a blank distance
+  doesn't bail, it records a 0-yard shot. Both lie selects default to real
+  values, so an unedited form submits plausible-looking garbage into the SG
+  engine.
+- [ ] **Club taxonomy.** Replace the free-text club `<Input>` with a
+  `<Select>` over `CLUB_ORDER`, plus an alias normalizer applied to
+  launch-monitor imports (`"7 Iron"` → `"7-Iron"`, `"Pitching Wedge"` →
+  `"PW"`). Today `strokes_gained.py:51`, `tiger_five.py:77` and
+  `putting.py:27` all match `club == "Putter"` exactly, and
+  `smart_bag.py:124` silently drops anything not in `CLUB_ORDER` — so a
+  user who types `7i` or `putter` loses their gapping and reads zero
+  3-putts, with no warning. This one change unblocks PRD §5.3, §6.1, and
+  two §7.1 combines.
+- [ ] **Profile screen**, wiring the already-built `updateProfile()` and
+  `MembershipCard` (currently rendered nowhere) so handicap index is
+  settable. `refresh_user_strokes_gained` already recomputes on change.
+- [ ] **Compute `total_score` from submitted shots.** It is currently only
+  ever read from the POST payload, which the web client never sends — so
+  the largest numeral on the dashboard and on the coach brief PDF reads
+  "—" after a user hand-enters 85 shots.
+
+**Acceptance criteria:** a **brand-new account with an empty database** —
+not the seeded one — can register, create or import a course, enter a
+round, submit it, see it marked verified, and land on its replay. That
+specific journey, walked end to end, is the acceptance criterion; per the
+root-cause note above, a pass against seed data does not count.
+
+## Phase 19 — Surface What's Already Computed (not started)
+
+Goal: three seats found fully-built analytics with no UI. Nothing here
+needs new analysis — only composition.
+
+- [ ] **Per-round debrief**: `RoundSnapshot` + `TigerFiveMeter` +
+  `CoachBriefButton` onto `/rounds/[id]`, which today imports `getSmartBag`
+  but never `getRoundAnalytics`. Title the page by course and date rather
+  than `Round {id}`.
+- [ ] **A real `/bag` screen** on the live `GET /bag`: per-club carry,
+  gaps, lateral dispersion, sample counts, outliers excluded. Nav item
+  clearly distinct from "Virtual Bag" (the sim-round logbook), which the
+  designer and PM reads both flagged as actively misleading.
+- [ ] **Wire `StatTile`'s existing `detail` prop** to PRD §8's diagnostic
+  parentheticals (`SG: APP: -2.40 ⚠️ (Toe/Open Bias)`). The backend already
+  computes putting mechanics split, short-sided counts, and strike tags;
+  the prop exists and is never passed.
+- [ ] **Round-over-round trends** — SG by category and Tiger 5/CCI across
+  the last N rounds. This is the only mechanism in the plan behind PRD §3's
+  retention KPI, and it requires the aggregation work below.
+- [ ] **Per-round SG summary aggregation.** Today the only way to get
+  SG-by-category is `GET /rounds/{id}/analytics`, which recomputes from raw
+  shots — a 30-round trend is 30 HTTP calls. `Shot.strokes_gained` is
+  already stored and already refreshed at the right moments, so this is a
+  `GROUP BY`; it wants the repository layer below rather than a fourth
+  private module under `routes/`.
+- [ ] **Extract a repository layer.** `routes/_shot_queries.py` is 177
+  lines of session-touching cross-route query logic living under `routes/`
+  because `CLAUDE.md`'s layering rule (correctly) bars it from `services/`.
+  The rule is right; the missing third layer isn't. `app/db/queries/` or
+  `app/repositories/`.
+- [ ] **In-product Strokes Gained methodology disclosure** — see the
+  `SCRATCH_CURVES` item under "Not scheduled" below. The licensing decision
+  needs a human; saying plainly how the number is derived is code.
+
+## Phase 20 — Make "Verified" Mean Something, and Deployable (not started)
+
+Goal: close the gap between what acceptance criteria claim and what any
+other person could reproduce, then make the thing runnable by someone
+other than its author.
+
+- [ ] **Playwright, committed and in CI**, covering the loop Phase 18
+  fixes. Eleven phases claim browser verification with nothing in the repo.
+  Those passes did happen — this sandbox ships Chromium with Playwright
+  configured — but none of it is reproducible or protects against
+  regression.
+- [ ] **`alembic check` in CI** — Phase 9 wrote this down ("an
+  'autogenerate produces an empty diff' check belongs in Phase 12's CI
+  work"), Phase 12 shipped six CI items without it, and its gap list didn't
+  carry it forward. It silently vanished. One line; the `backend` job
+  already has a live Postgres. There is no drift today; nothing would catch
+  the next one.
+- [ ] **Response models on the 19 untyped endpoints.** Every analytics
+  handler returns bare `dict`/`list[dict]`, against 718 hand-written lines
+  in `api.ts` whose `apiFetch` does an unchecked `as T` cast. Rename a
+  field server-side and the frontend compiles clean, tests pass, and the
+  number renders `undefined`. Then generate TS types from OpenAPI with a
+  CI no-diff check.
+- [ ] **Align CI runtimes to the Dockerfiles.** CI runs Python 3.12 / Node
+  22; the images are `python:3.14-slim` / `node:26-slim`. Dependabot bumped
+  the images and nothing updated CI, so two Python majors and four Node
+  majors are tested nowhere.
+- [ ] **Make the prod images work.** `ARG NEXT_PUBLIC_API_URL` (and the
+  Mapbox token) as build args — today every prod image hardcodes
+  `http://localhost:8000` and is unusable. CI pushes tagged images instead
+  of `push: false`.
+- [ ] **Migrations on release** — an entrypoint or release command running
+  `alembic upgrade head`. Nothing runs migrations today outside `make` and
+  CI.
+- [ ] **The cookie/origin decision.** `_COOKIE_ATTRS` hardcodes
+  `samesite: "lax"` with no domain knob, and the frontend calls
+  cross-origin with `credentials: "include"`. Split onto different
+  registrable domains — the default Vercel + Fly/Render outcome — and the
+  browser never sends the cookie. Choose same-parent-domain or a Next
+  `rewrites()` proxy, and answer CSRF either way: `SameSite=Lax` is
+  currently the app's only CSRF defense.
+- [ ] **Engine pool sizing** (`pool_size`/`max_overflow`/`pool_pre_ping`) —
+  SQLAlchemy's 15 default connections against Starlette's 40-thread sync
+  pool queues on a 30s timeout and surfaces as an opaque 500.
+- [ ] **`--proxy-headers --forwarded-allow-ips`** — nothing reads
+  `X-Forwarded-For`, so behind any proxy every request appears to come from
+  one IP. This must land before rate limiting, and it's why the access log
+  has no client IP today.
+- [ ] **Move the three blocking `async def` handlers off the event loop**
+  (`upload_fit_activity`, `upload_practice_session`, `garmin_callback`) —
+  each stalls every in-flight request including the `/health` probe that
+  decides whether the container gets restarted.
+- [ ] **Timezone-aware columns**, before real data exists. Every datetime
+  column is `TIMESTAMP WITHOUT TIME ZONE` while the app writes aware UTC;
+  Postgres drops the offset using the server's `TimeZone` GUC, FastAPI
+  serializes without a `Z`, and the browser parses offset-less datetimes as
+  local. A 6pm Pacific tee time displays as tomorrow. `fit_parser.py:83`
+  also feeds naive datetimes into the same column, so `played_at` is a mix
+  of naive-UTC and naive-unknown with nothing distinguishing them — which
+  is exactly why this gets more expensive with every row.
+- [ ] **Backup/restore, exercised once.** There is none. `DELETE /me` is a
+  single cascade delete and is irreversible.
+- [ ] **A `SECRET_KEY` rotation procedure** — ideally a versioned-key
+  scheme. Today rotation logs everyone out, permanently destroys every
+  stored Garmin token, and kills in-flight password resets.
+- [ ] **Drop `deck.gl` and `shadcn` from prod dependencies.** `deck.gl` has
+  zero imports in `src/` and is the sole source of the two "unfixable"
+  `pnpm audit` findings Phase 12 documented at length as accepted risk. The
+  accepted risk is removable by deleting an unused dependency.
+
+## Phase 21 — Security & Abuse Follow-Through (not started)
+
+Goal: the items Part III's review deferred to the Backlog, plus what Phase
+15 shipped without.
+
+- [ ] **Invalidate sessions on password reset.** `reset_password` changes
+  `password_hash`, but `create_session_token` carries only
+  `{user_id, exp}` — it is not bound to the password the way the *reset*
+  token deliberately is via `_password_fingerprint`. So the canonical
+  "someone has my account, I'm resetting my password" flow leaves the
+  attacker's cookie valid for the full 30-day TTL. Add `User.session_version`
+  checked inside the query `get_current_user` already runs, bumped on reset,
+  and expose it as "sign out everywhere." **This is why session revocation
+  moves out of the Backlog: Phase 15 made it urgent and is marked `(done)`
+  with no qualifier.**
+- [ ] **A password *change* endpoint.** `PATCH /auth/me` takes `name` and
+  `handicap_index` only. Phase 10's gap read "no password reset **or
+  change** flow"; Phase 15 closed reset and its gap list doesn't mention
+  change. A signed-in user must log out and email themselves a link.
+- [ ] **Guard `send_email` in `forgot_password`** (QA C2). It is called
+  unguarded, and `email.py:49` raises `EmailError` on any SMTP failure — so
+  with a flaky relay a **known** address 500s while an **unknown** one
+  returns 200, which is precisely the account-enumeration distinction the
+  endpoint's own docstring says it exists to prevent. Invisible today only
+  because `smtp_host` is blank everywhere this has run. Add the regression
+  test asserting 200 on send failure — `test_same_response_for_an_unknown_email`
+  mocks `send_email` to succeed and so tests two happy paths.
+- [ ] **Rate limiting** on login/register/forgot-password/upload **and**
+  `GET /courses/search-osm`, which proxies an authenticated user's
+  arbitrary query to `overpass-api.de` — a volunteer-run service with
+  published fair-use limits — with no throttle or cache. **The Backlog's
+  "blocked on a shared-store decision" framing was wrong:** the API runs as
+  a single uvicorn process with no `--workers`, so in-memory counters work
+  today and the interface survives a later move to Postgres or a cache.
+- [ ] **Missing DB constraints.** `Course.osm_relation_id` is `index=True`,
+  not `unique=True`, so `courses.py:235`'s documented idempotency is a
+  read-then-write race; `Hole` has no `UniqueConstraint(course_id, number)`,
+  and `_resolve_round_holes` would silently pick one of two duplicates.
+  `create_course` also commits twice, so a failure between them leaves an
+  orphan course with zero holes.
+- [ ] **`max_length` on `BulkShotsIn`** — unbounded today; the 10 MiB limit
+  permits ~50,000 shot objects, each followed by a `session.refresh` in the
+  response loop.
+
 ## Not scheduled — blocked on something other than engineering time
 
 These are real gaps, listed so they aren't mistaken for oversights. None of
@@ -1231,6 +1500,33 @@ them is waiting on a decision I can make or work I can do.
   legal review" in the product itself. Needs counsel, not code.
 - **GitHub secret scanning** (Phase 12). A repository setting, not a commit —
   needs an admin to toggle it at Settings → Security.
+- **The Strokes Gained baseline curves** (Phase 1, raised by Part IV's PM
+  read). `app/services/benchmarks.py:1-7` says it plainly: the curves are
+  "a hand-authored *approximation* of the shape of Mark Broadie's published
+  Strokes Gained baseline tables — internally consistent and monotonic, but
+  not a transcription of licensed PGA Tour/Arccos data. Swap
+  `SCRATCH_CURVES` for licensed figures before this feeds anything
+  user-facing." They now feed the dashboard, the coach brief PDF, the
+  combines detector, and the stored `Shot.strokes_gained` column. The
+  handicap buckets are derived from a made-up multiplicative factor table
+  (`HANDICAP_FACTORS`), not measured amateur baselines. Three options, all
+  requiring a human: license real figures, derive them from aggregate user
+  data (which triggers the Smart Bag data-minimization note in
+  `DATA_PRIVACY.md`), or ship with explicit in-product disclosure. The
+  current state — shipping numbers the code itself calls an approximation,
+  silently — is the one option that violates this repo's own "don't quietly
+  present unverified things as working" convention. The disclosure half is
+  scheduled in Phase 19; the licensing decision is not mine to make.
+- **One real Garmin golf `.FIT` file** (raised by Part IV's PM read).
+  Distinct from the Developer Program blocker above: **exporting an
+  activity from Garmin Connect does not require a paid account** — only the
+  live sync API does. One real file would settle whether Garmin encodes
+  per-shot or per-hole golf messages that map directly to `Shot`, which
+  decides whether near-automatic ingestion is available with no API access
+  at all, or whether shot segmentation from the GPS track is required. That
+  answer changes the shape of manual entry substantially enough that it is
+  worth having before scoping any further ingestion work. `fit_parser.py`
+  today parses and counts points, then discards them.
 
 ## Backlog (not yet scheduled into a phase)
 
@@ -1254,7 +1550,13 @@ them is waiting on a decision I can make or work I can do.
 - ~~No merge/rename flow for near-duplicate players (carried from Phase 8).~~
   **Split.** Rename turned out to already work — `PATCH /api/auth/me` covers
   it, as a side effect of Phase 10 rather than by design for this item.
-  **Account merge itself is deferred here, deliberately, not scheduled.** A
+  **Account merge itself: won't do.** Closed by Part IV's review — two
+  independent panels have now declined to schedule it, the triggering UI
+  (Phase 8's picker) has been deleted, and real login/password auth makes
+  the scenario rarer still. Keeping a paragraph of design notes for an
+  unbuilt feature is worse than nothing, because it makes the item look
+  ready; the notes are retained below only so a future reopen starts from
+  the same analysis rather than redoing it. Original entry: A
   four-perspective plan review (see Part III's intro) found no evidence
   anyone has actually hit the scenario it exists for — it was inherited from
   Phase 8's picker UI, which let near-duplicate accounts get created by
@@ -1266,9 +1568,13 @@ them is waiting on a decision I can make or work I can do.
   an explicit answer for what happens when both accounts have a row that
   collides (e.g. a round on the same date) — none of which was worked out
   before this deferral, on purpose.
-- **Server-side session revocation** (Phase 10 gap, considered for Phase 14
-  in the first draft of this Part, deferred by the plan review). Today's
-  revocation lever — rotate `SECRET_KEY`, which invalidates every session at
+- ~~**Server-side session revocation**~~ — **promoted to Phase 21 by Part
+  IV's review.** The reasoning below is still correct about cost, and was
+  wrong about urgency: Phase 15 shipped password reset *without* invalidating
+  existing sessions, so the recovery flow leaves a stolen cookie valid for
+  30 days. That changed this from a scale question into a live security gap.
+  Original entry retained for the cost analysis, which Phase 21 follows.
+  Today's revocation lever — rotate `SECRET_KEY`, which invalidates every session at
   once — is coarse but functional at this app's actual scale, and the
   original framing of the cost was wrong: `get_current_user` already reads
   the database on every authenticated request, so a `session` table adds a
@@ -1277,9 +1583,17 @@ them is waiting on a decision I can make or work I can do.
   a separate lookup, and re-run `scripts/benchmark.py` either way — the plan
   review's developer read flagged this as the one change in this document
   that can plausibly slow every endpoint.
-- **Login/register/upload/forgot-password rate limiting** (Phase 10 *and* 11
-  gap, also deferred from the first draft's Phase 14; Phase 15 added a
-  fourth public endpoint sharing it rather than closing it). Still real —
+- ~~**Login/register/upload/forgot-password rate limiting**~~ — **promoted
+  to Phase 21 by Part IV's review, which found the blocker below is not
+  real.** The API runs as a single uvicorn process with no `--workers`
+  (`apps/api/Dockerfile`), so in-memory counters work today and the
+  interface survives a later move to Postgres or a shared cache; deferring a
+  security control on a hypothetical multi-worker deployment that has no
+  deployment configuration at all is backwards. The review also widened the
+  scope: `GET /courses/search-osm` proxies arbitrary user queries to
+  volunteer-run `overpass-api.de` with no throttle or cache, and
+  `--proxy-headers` must land first or an IP-keyed limiter throttles every
+  user as one client. Original entry: still real —
   Argon2 makes one password guess expensive, which is not the same as
   bounding the number of guesses, and `forgot-password` triggers a real
   email send per request — just not urgent enough to lead with. Needs a
@@ -1288,15 +1602,32 @@ them is waiting on a decision I can make or work I can do.
   counters don't work once there's more than one worker process. Build the
   counters on Postgres, or add a shared cache, before writing the limiter
   itself.
-- **Caching `GET /rounds/{id}/analytics`** (cut from Phase 16's first draft
-  by the plan review). Phase 11 already got this endpoint to 5.7ms; a cache
+- **Caching `GET /rounds/{id}/analytics`** — **won't do.** Closed by Part
+  IV's review: this entry has contained its own refutation through two
+  planning cycles, and re-reading it every cycle is the cost. Reopen only
+  with profiling evidence from real usage, as a new entry. Original
+  reasoning: Phase 11 already got this endpoint to 5.7ms; a cache
   whose key can miss the round's shots, its course, or the caller's handicap
   index serves a confidently wrong Strokes Gained number, and that
   correctness risk isn't worth it for an endpoint that isn't slow. Revisit
   only if profiling on real usage ever shows otherwise — not a guess ahead
   of the data.
-- **Faster manual entry** (raised by the plan review's end-user read, not
-  previously written down anywhere). Live Garmin sync stays blocked on a
+- **Faster manual entry** — **re-scoped by Part IV's end-user read, which
+  argued this entry names the wrong bottleneck.** The original framing below
+  is speed ("bulk hole entry, or a spreadsheet/CSV import"). The read's
+  objection: `start_distance_yards` and `end_distance_yards` are required
+  per shot, and they are measurements no golfer possesses after the round —
+  the app is asking for ~170 distance-to-pin readings taken *during* play,
+  which PRD §1.3 explicitly rules out ever capturing ("No Live In-Round GPS
+  Rangefinder Interface"). CSV import doesn't fix that; it relocates the
+  fabrication into a spreadsheet. The honest options are to **derive
+  distances from the GPS points the user already clicks** (the geometry is
+  already there — `services/geometry.py` does this math) or to **accept a
+  thinner shot record** (club + result) and compute the rest. Settle which,
+  then decide whether bulk/CSV import is still worth building. Note also
+  that this is entangled with the `.FIT` question under "Not scheduled": if
+  Garmin encodes per-shot data, most of this entry evaporates. Original
+  entry: Live Garmin sync stays blocked on a
   paid Developer Program account (see "Not scheduled" above) with no
   near-term path to unblocking it, which means hand-clicking every shot on
   a hole map stays the fastest way to get a round in for the foreseeable
@@ -1304,8 +1635,17 @@ them is waiting on a decision I can make or work I can do.
   once, would address the actual bottleneck a real user is facing today —
   worth scoping into a phase once there's a concrete design, rather than
   left implicit.
-- **Live, in-round pin capture** (raised by Phase 14's pre-implementation
-  panel pass, specifically the end-user read). Phase 14 as scoped captures a
+- **Live, in-round pin capture** — **still not scheduled, and the stated
+  trigger is void.** This entry says to revisit "once there's real data on
+  whether desk-based pin capture actually gets used." Part IV's design read
+  showed that data can never be conclusive as things stand: placing a pin is
+  a mouse-only `onClick` on an element with `role="img"`, no `tabIndex` and
+  no key handler (`hole-replay-svg.tsx:130`), buried behind a mode toggle
+  with no focus style, on a screen reached only after building a course by
+  hand. Low usage would measure the capture surface, not the appetite. Fix
+  the surface (Phase 18's entry path, and the accessibility work this entry
+  now blocks on) before drawing any conclusion. Original entry: Phase 14 as
+  scoped captures a
   pin after the fact, at a desk, in manual entry — the same read predicted
   that's exactly the kind of optional step a player skips every time,
   leaving the "true" short-siding feature mostly dormant on top of a mostly
@@ -1327,6 +1667,59 @@ them is waiting on a decision I can make or work I can do.
   design to build against: what gets shared (a round? the coach brief?),
   with whom, and whether it's a public URL, a signed export, or something
   else.
+
+- **Accessibility pass** (new; raised by Part IV's design read). Not
+  scheduled into Part IV because Phase 18-19 will rewrite several of the
+  affected surfaces and doing this first would mean doing it twice — but it
+  should be a phase after 19, not a perpetual backlog item, and Phase 21's
+  in-round-pin-capture entry now blocks on it. The concrete findings: no
+  skip link anywhere (`grep` for `sr-only` returns nothing) with 5-7 nav tab
+  stops before content on every page (WCAG 2.4.1); the entire spatial
+  ingestion path is mouse-only — placing a shot's GPS point, today's pin,
+  and every tee/green/boundary in the course builder are `onClick` on
+  `role="img"` with no `tabIndex`, no key handler, and no numeric lat/lng
+  fallback (2.1.1, 4.1.2); `--border` is `#DED2B4` on `#F3EEE1` = **1.30:1**,
+  where `STYLE_GUIDE.md`'s own token table claims it "clears 3:1 for
+  non-text" — and since `Input` is "a single bottom hairline, no box," a
+  form field at rest is delineated to a low-vision user by that line and
+  nothing else (1.4.11). That last one needs a decision recorded in the
+  style guide — darker border, low-contrast-mode query, or an accepted and
+  documented exception — not a silent retint, and the table's false claim
+  should be corrected either way. Also: `<dl>` wrappers containing no
+  `<dt>`/`<dd>` (`round-snapshot.tsx:99`, `tiger-five-meter.tsx:57`), no
+  focus management through the audit queue, hole/club selectors as N
+  independent tab stops rather than arrow-navigable groups with real
+  accessible names ("7", not "Hole 7"), and ~30x26px touch targets on the
+  most-tapped control in the app.
+- **Design-system reach** (new; raised by Part IV's design read).
+  `focus-visible` appears in **zero** files outside `components/ui/`, so the
+  system's most deliberate detail covers a minority of the app's interactive
+  surface. The primary CTA is hand-rolled with a different height, padding
+  and radius in `error.tsx:41`, `not-found.tsx:31` and `signed-out.tsx:31`.
+  `hover:opacity-90` on primary fills (`enter/page.tsx:224`,
+  `courses/new/page.tsx:424`) is the one hover treatment `STYLE_GUIDE.md`
+  §2 explicitly rejects. Course builder and the audit wizard are the two
+  screens the style guide's own §8 named as outstanding and the 2026-08-16
+  pass didn't reach. Two tokens need a wire-it-or-delete-it ruling, the same
+  call the guide already made for `--status-serious`: the `.dark` palette is
+  entirely unreachable (`@custom-variant dark (&:is(.dark *))` is
+  class-based and nothing ever adds `.dark`) — ~45 lines plus `dark:`
+  variants in `button.tsx` plus a comment in `hole-replay-map.tsx:16`
+  asserting theme-tracking that isn't true; and `--chart-2` is the exact
+  ochre retired from `--status-warning` for failing contrast, still sitting
+  in the chart palette waiting to be re-introduced by the next chart.
+- **The PGA Coach persona has no product** (new; raised by Part IV's PM
+  read). PRD §2 names a coach managing multiple students as half the target
+  audience. After Phase 10, identity is strictly self-only by design: no
+  coach role, no student list, no sharing primitive. The coach's entire
+  experience is "the student downloads a PDF and emails it." That may be the
+  right v1 scope, but it should be a *stated* decision in the PRD rather
+  than an unremarked hole — and it is what the removed `/share` nav item
+  (below) was for. If it proceeds, the design read's argument is that
+  `/share` should be spec'd as one concrete thing — a signed, expiring,
+  read-only link to a round's Coach Brief — and not built at all until a
+  real coach can validate it, since two *fully specified* views (per-round
+  debrief, Smart Bag) have working backends and no UI.
 
 New findings go here first; they move into a phase once there's enough of a
 theme to justify one.
