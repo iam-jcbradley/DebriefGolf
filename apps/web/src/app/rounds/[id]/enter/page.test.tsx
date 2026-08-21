@@ -115,7 +115,7 @@ describe("EnterRoundPage", () => {
     await user.click(screen.getByRole("button", { name: "Add shot" }));
 
     expect(await screen.findByText(/Driver/, { selector: "span" })).toBeInTheDocument();
-    expect(screen.getByText(/pinned/, { selector: "span" })).toBeInTheDocument();
+    expect(screen.getByText(/GPS set/, { selector: "span" })).toBeInTheDocument();
   });
 
   it("switches holes and fetches that hole's geometry", async () => {

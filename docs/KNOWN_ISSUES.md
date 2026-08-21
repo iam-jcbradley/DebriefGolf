@@ -32,7 +32,121 @@ deleted, so the history of what broke and why is still here later.
   failure, same test, each time only inside the full-suite run. *Found by:
   Dependabot PR review, 2026-08-17.*
 
+- **The audit wizard never submits a reviewed round to the backend — the
+  `.FIT`-upload ingestion path dead-ends and silently discards the user's
+  work.** `POST /rounds/upload` (Phase 1/3) only extracts a GPS track; the
+  Phase 3 design was for `/rounds/[id]/audit` to be where those points get
+  segmented into shots and reviewed. The dashboard's "Round uploaded — audit
+  needed" banner (`isPendingAnalytics`, shown whenever a round has zero
+  shots) links straight to it. But `AuditWizard`
+  (`src/components/audit-wizard/audit-wizard.tsx`) and its parent page
+  (`src/app/rounds/[id]/audit/page.tsx`) only ever call
+  `setShots`/`useAuditDraft` — grepping the whole `audit-wizard/` and
+  `lib/audit/` trees for `submitRoundShots` or any other `@/lib/api` import
+  turns up nothing. Working through the wizard to completion lands on "All
+  caught up ... Submitting a reviewed round back to Debrief Golf needs a
+  course assigned to it first — that flow isn't built yet (see
+  docs/DEVELOPMENT_PLAN.md Phase 3/4)" — text left over from Phase 3, and
+  now also factually wrong: Phase 5 added course assignment at round
+  creation, so a round reaching the wizard always has one. Reproduced
+  live: uploaded `tests/fixtures/corrupted.fit` (flagged `casual_practice`,
+  as designed), followed the dashboard's own "Open the audit wizard" link,
+  added and fully reviewed a shot, hit "All caught up" — `GET
+  /rounds/{id}/shots` for that round still returns `[]`. Phase 5's own goal
+  line claims "it also finally wires up the audit wizard's client-only
+  draft state ... to real persistence," but what actually shipped was a
+  *separate*, new page (`/rounds/[id]/enter`) with a real
+  `submitRoundShots` call — the original `/audit` wizard was never touched,
+  and the gap was never recorded as carried-forward anywhere. Net effect:
+  the only working ingestion path today is manual entry
+  (`/rounds/new` → `/rounds/[id]/enter`); the `.FIT`-upload path the
+  dashboard actively promotes leads users to lose their review work. *Found
+  by: full-app testing pass, 2026-08-21.*
+
+- **No code path ever marks a `Round` `verified`, so the dashboard can't
+  tell a genuinely clean round from a barely-started one.** Grepping all of
+  `apps/api/app/` for `RoundStatus.verified` turns up exactly one hit:
+  `app/db/seed.py`'s hardcoded demo round. There is no `PATCH /rounds/{id}`
+  endpoint and no other write path that changes `status` after creation —
+  every round created through a real flow (manual entry or `.FIT` upload)
+  defaults to `needs_audit` (`app/api/routes/rounds.py:253`) and stays
+  there forever, so the "Needs audit" vs. "Verified" distinction
+  `rounds/page.tsx`'s `STATUS_LABELS`/`STATUS_CLASSES` render is dead for
+  every real user — only the seeded demo account ever shows "Verified."
+  Compounding this, the dashboard's Tiger 5 Meter doesn't fall back to
+  `status` either: `isPendingAnalytics` only detects *zero* shots (the
+  `.FIT`-upload-with-nothing-reviewed-yet case above), so a round with a
+  handful of shots but far short of 18 holes — the normal in-progress state
+  for manual entry, which the Backlog's "Faster manual entry" item already
+  notes happens hole-by-hole over multiple sessions — renders the full
+  Round Snapshot and Tiger 5 Disaster Meter as if the round were finished.
+  Reproduced live: created a round via `/rounds/new`, entered 3 shots for
+  hole 1 of 18 via `/rounds/[id]/enter`, submitted. The dashboard's "Where
+  It Went Wrong" panel showed 0 for every Tiger 5 category and a **100%
+  Clean Card Index** — a real golfer checking their dashboard mid-entry
+  would see a falsely reassuring "perfect round" for data that's one hole
+  out of eighteen. This is presumably the same root cause as the audit-wizard
+  gap above: `verified` looks designed to mean "reviewed and complete," but
+  nothing ever sets it, so no signal exists anywhere for "this round isn't
+  done yet" beyond the zero-shots case. *Found by: full-app testing pass,
+  2026-08-21.*
+
+- **Four files trip `react-hooks/set-state-in-effect`, an ESLint warning
+  `pnpm lint`/CI don't fail on.** `src/app/rounds/[id]/enter/page.tsx:56`,
+  `src/app/rounds/[id]/page.tsx:62`, `src/app/rounds/page.tsx:45`, and
+  `src/lib/current-user.tsx:73` all call `setState` synchronously inside a
+  `useEffect` body (clearing prior state before an async fetch, or setting
+  `loading`), which `eslint-plugin-react-hooks` flags as able to trigger a
+  cascading extra render. `apps/web/package.json`'s `lint` script is plain
+  `eslint` with no `--max-warnings 0`, so these show up green in CI (`pnpm
+  lint` exits 0) and are easy to miss without reading the job's full log.
+  Not verified as a real user-visible bug — the standard fix (moving the
+  reset into the state updater that starts the fetch, or an early-return
+  guard) touches core data-loading effects in four different files, which
+  is real design/testing work, not a drop-in edit — so left as a
+  documented finding rather than fixed in the same pass this was found in.
+  *Found by: full-app testing pass, 2026-08-21.*
+
 ## Fixed
+
+- ~~**Ambiguous "· pinned" label in the manual-entry shot list.**
+  `src/app/rounds/[id]/enter/page.tsx`'s per-shot summary line appended "
+  · pinned" whenever `shot.location` was set — i.e., whenever *that shot's
+  own* GPS location had been clicked. The same page already uses "pin" for
+  a distinct, separately-tracked concept (the hole's actual flag position
+  for the day, set via the adjacent "Set today's pin" mode in
+  `HoleShotEntry`), so a shot with a GPS location and a hole with a
+  recorded pin both showed pin-flavored language for two different
+  things.~~ **Fixed.** Changed the label to "· GPS set", which describes
+  what's actually true (this shot has a location) without colliding with
+  the hole-pin terminology used two lines above it in the same UI.
+  `page.test.tsx`'s "adds a shot with a GPS location and lists it" test
+  updated to assert the new text. *Found by: full-app testing pass,
+  2026-08-21. Fixed: 2026-08-21.*
+
+- ~~**`next dev` (Next.js 16.3.0) writes `apps/web/AGENTS.md` +
+  `apps/web/CLAUDE.md` and rewrites `apps/web/tsconfig.json` on every run,
+  none of it gitignored.** Confirmed by starting the dev server for this
+  testing pass and running `git status` immediately after: two new
+  untracked files, plus `tsconfig.json`'s `jsx` silently changed from
+  `preserve` to `react-jsx` (Next 16's own console output calls this a
+  "mandatory" change, not a suggestion) and `.next/dev/types/**/*.ts` added
+  to `include`. Every contributor who runs `pnpm dev` locally gets this
+  same churn in `git status`, and the generated `apps/web/CLAUDE.md` — its
+  entire content is `@AGENTS.md` — risked eventually getting committed by
+  accident and shadowing this repo's real root `CLAUDE.md` for any tooling
+  that reads directory-local instructions.~~ **Fixed.** Set `agentRules:
+  false` in `apps/web/next.config.ts` so the generator doesn't run at all,
+  gitignored `apps/web/{AGENTS,CLAUDE}.md` as a backstop in case a
+  contributor's Next version doesn't honor that flag, and committed the
+  `tsconfig.json` change for real (`jsx: react-jsx`, the new
+  `.next/dev/types` include path) instead of leaving it as permanent
+  working-tree drift — it turned out to be a genuine, mandatory
+  requirement of the Next 16 upgrade that had never been applied, not a
+  cosmetic auto-format. Verified with a clean `pnpm dev` restart (no new
+  untracked files) and a full `pnpm build` (compiles, typechecks, and
+  prerenders all 13 routes). *Found by: full-app testing pass, 2026-08-21.
+  Fixed: 2026-08-21.*
 
 - ~~**Stale service-layer README.** `apps/api/app/services/README.md` — the
   file `CLAUDE.md` explicitly points readers to first ("See

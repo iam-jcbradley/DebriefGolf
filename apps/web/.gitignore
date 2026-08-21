@@ -17,6 +17,13 @@
 /.next/
 /out/
 
+# `next dev`'s agent-rules generator is disabled (next.config.ts), but
+# gitignore these too in case a contributor's Next version doesn't honor
+# that flag — the generated CLAUDE.md is just `@AGENTS.md` and would shadow
+# this repo's real root CLAUDE.md if ever committed.
+/AGENTS.md
+/CLAUDE.md
+
 # production
 /build
 

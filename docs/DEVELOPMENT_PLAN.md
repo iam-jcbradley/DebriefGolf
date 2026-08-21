@@ -1328,6 +1328,38 @@ them is waiting on a decision I can make or work I can do.
   with whom, and whether it's a public URL, a signed export, or something
   else.
 
+- **Round review/verification is a dead end for the `.FIT`-upload path, and
+  the dashboard can't tell an in-progress round from a finished one**
+  (found by a full-app testing pass, 2026-08-21 — full write-up, code
+  references, and live repro steps in `docs/KNOWN_ISSUES.md`'s Open
+  section). Two compounding gaps: (1) `/rounds/[id]/audit`'s wizard
+  reviews shots entirely client-side and never calls the backend —
+  finishing it just says persistence "isn't built yet," discarding the
+  user's work, even though the dashboard's own "audit needed" banner sends
+  people there after every `.FIT` upload; manual entry
+  (`/rounds/[id]/enter`) is the only ingestion path that actually saves
+  anything. (2) No code path anywhere ever sets a `Round`'s status to
+  `verified` — it's permanently `needs_audit` for every real round, only
+  the seed script's demo data ever shows "Verified" — and the dashboard's
+  Tiger 5 Meter / Clean Card Index render off whatever shots exist with no
+  "this round isn't finished" signal beyond zero shots, so a round with
+  one hole entered out of eighteen shows a misleadingly perfect 100% Clean
+  Card Index. Needs a real design decision (what makes a round "done" —
+  all 18 holes? an explicit user action?) before either half can be fixed,
+  which is why this is recorded here rather than patched inline.
+- **Manual-entry shot-entry label and Next.js 16 dev-server tsconfig drift**
+  (found and fixed same pass, full-app testing pass, 2026-08-21 — see
+  `docs/KNOWN_ISSUES.md`'s Fixed section for both). The enter-shots page's
+  "· pinned" label, confusable with the unrelated hole-pin feature next to
+  it, is now "· GPS set". Separately, `next dev`/`next build` on the
+  Next.js 16.3.0 this repo is now on required `tsconfig.json`'s `jsx:
+  "preserve"` → `"react-jsx"` (a real, mandatory requirement the version
+  bump had never picked up, not a cosmetic reformat) and a new
+  `.next/dev/types/**/*.ts` include path; both are now committed, and
+  `next.config.ts`'s new `agentRules: false` plus a `.gitignore` backstop
+  stop `next dev` from also writing uncommitted `AGENTS.md`/`CLAUDE.md`
+  files into `apps/web/` on every run.
+
 New findings go here first; they move into a phase once there's enough of a
 theme to justify one.
 
