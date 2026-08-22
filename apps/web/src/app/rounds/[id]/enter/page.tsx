@@ -201,7 +201,7 @@ export default function EnterRoundPage() {
                 <li key={shot.id} className="flex items-center justify-between gap-2">
                   <span>
                     {shot.club ?? "—"} · {shot.startLie} {shot.startDistanceYards}y →{" "}
-                    {shot.endLie} {shot.endDistanceYards}y{shot.location ? " · pinned" : ""}
+                    {shot.endLie} {shot.endDistanceYards}y{shot.location ? " · GPS set" : ""}
                   </span>
                   <button
                     type="button"
