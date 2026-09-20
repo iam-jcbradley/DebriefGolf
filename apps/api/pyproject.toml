@@ -17,7 +17,7 @@ dependencies = [
     "python-multipart>=0.0.20",
     "sqlalchemy>=2.0.52",
     "sqlmodel>=0.0.39",
-    "uvicorn[standard]>=0.52.3",
+    "uvicorn[standard]>=0.53.0",
 ]
 
 [dependency-groups]
